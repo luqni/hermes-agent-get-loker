@@ -185,8 +185,10 @@ class HermesScraper:
                         res_text = res_text[first_bracket:last_bracket+1]
                     return json.loads(res_text)
                 elif response.status_code in [429, 503]:
-                    logger.warning(f"AI Provider returned {response.status_code}. Retrying in 5s...")
-                    time.sleep(5)
+                    # Jeda eksponensial: percobaan 1 = 5s, percobaan 2 = 15s, percobaan 3 = 35s
+                    sleep_time = (5 * (2 ** attempt)) + (index * 2) 
+                    logger.warning(f"OpenRouter 429 (Rate Limit) untuk Gemma. Mencoba kembali dalam {sleep_time} detik...")
+                    time.sleep(sleep_time)
             except Exception as e:
                 logger.error(f"AI Link extraction attempt {attempt+1} failed: {str(e)}")
                 time.sleep(2)
