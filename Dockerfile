@@ -1,34 +1,8 @@
-FROM python:3.11-slim
+# 1. Install curl dan pip/dependencies dasar Anda terlebih dahulu
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+# 2. Pastikan urutan setelah "pip install playwright" dijalankan di Dockerfile Anda:
+RUN pip install -r requirements.txt
 
-# Install system dependencies needed for Playwright headless browser
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    libnss3 \
-    libatk-1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libdrm2 \
-    libxkbcommon0 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxrandr2 \
-    libgbm1 \
-    libpango-1.0-0 \
-    libcairo2 \
-    libasound2 \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Download and install headless Chromium for Playwright
-RUN playwright install chromium
-RUN playwright install-deps chromium
-
-COPY . .
-
-EXPOSE 8000
-
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# 3. Suruh Playwright menginstall browser beserta seluruh dependensi sistemnya sendiri secara otomatis
+RUN playwright install chromium --with-deps
