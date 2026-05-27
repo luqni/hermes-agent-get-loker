@@ -185,8 +185,9 @@ class HermesScraper:
                         res_text = res_text[first_bracket:last_bracket+1]
                     return json.loads(res_text)
                 elif response.status_code in [429, 503]:
-                    # Jeda eksponensial: percobaan 1 = 5s, percobaan 2 = 15s, percobaan 3 = 35s
-                    sleep_time = (5 * (2 ** attempt)) + (index * 2) 
+                    # Perbaikan: Menghapus variabel 'index' yang tidak ada di fungsi ini
+                    # Percobaan 1 = 5s, Percobaan 2 = 10s, Percobaan 3 = 20s, Percobaan 4 = 40s
+                    sleep_time = 5 * (2 ** attempt) 
                     logger.warning(f"OpenRouter 429 (Rate Limit) untuk Gemma. Mencoba kembali dalam {sleep_time} detik...")
                     time.sleep(sleep_time)
             except Exception as e:
