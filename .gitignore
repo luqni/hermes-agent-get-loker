@@ -1,0 +1,29 @@
+# Python Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Python Cache & Compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Environment Variables & Secrets (Sangat Penting!)
+.env
+.env.[a-zA-Z]*
+!.env.example
+
+# Playwright Browser Downloads & Caches
+.browser-downloads/
+.playwright/
+
+# Application Logs & Temporary Debug Files
+*.log
+debug_*.html
+.hermes_cache/
+
+# OS temporary files
+.DS_Store
+Thumbs.db
