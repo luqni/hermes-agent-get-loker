@@ -65,12 +65,34 @@ class HermesScraper:
 
     def _normalize_url(self, url: str) -> str:
         import urllib.parse
+        import re
         parsed = urllib.parse.urlparse(url)
-        if 'indeed.com' in parsed.netloc:
+        netloc = parsed.netloc.lower()
+        
+        if 'linkedin.com' in netloc:
+            match = re.search(r'/jobs/view/(?:.*?-)?(\d+)', parsed.path)
+            if match:
+                return f"https://www.linkedin.com/jobs/view/{match.group(1)}"
+            return f"https://www.linkedin.com{parsed.path}"
+            
+        elif 'jobstreet' in netloc:
+            match = re.search(r'/job/(?:.*?-)?(\d+)', parsed.path)
+            if match:
+                return f"https://www.jobstreet.co.id/id/job/{match.group(1)}"
+            return f"https://www.jobstreet.co.id{parsed.path}"
+            
+        elif 'indeed.com' in netloc:
             qs = urllib.parse.parse_qs(parsed.query)
             if 'jk' in qs:
-                return f"{parsed.scheme}://{parsed.netloc}{parsed.path}?jk={qs['jk'][0]}"
-        return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                return f"https://id.indeed.com/viewjob?jk={qs['jk'][0]}"
+            return f"https://id.indeed.com{parsed.path}"
+
+        elif 'karirhub' in netloc:
+            match = re.search(r'/lowongan/(\d+)', parsed.path)
+            if match:
+                return f"https://karirhub.kemnaker.go.id/lowongan/{match.group(1)}"
+
+        return f"{parsed.scheme}://{netloc}{parsed.path}"
 
     def _load_visited_urls(self):
         import os
@@ -338,14 +360,21 @@ class HermesScraper:
     def push_to_laravel(self, platform_name: str, job_data: dict, source_url: str) -> bool:
         webhook_url = f"{settings.LARAVEL_API_URL}/webhooks/jobs"
         headers = {"X-Hermes-Token": settings.HERMES_WEBHOOK_TOKEN, "Content-Type": "application/json"}
+        
+        reqs = job_data.get("requirements", [])
+        if isinstance(reqs, str):
+            reqs = [reqs]
+        elif not isinstance(reqs, list):
+            reqs = []
+            
         payload = {
             "platform_name": platform_name,
-            "job_title": job_data.get("job_title", "Unknown Job"),
+            "job_title": job_data.get("job_title") or "Unknown Job",
             "company_name": job_data.get("company_name"),
             "company_logo": job_data.get("company_logo"),
-            "requirements": job_data.get("requirements", []),
+            "requirements": reqs,
             "source_url": source_url,
-            "location": job_data.get("location", "Indonesia"),
+            "location": job_data.get("location") or "Indonesia",
             "posted_at": job_data.get("posted_at")
         }
         try:
@@ -397,9 +426,9 @@ class HermesScraper:
             cleaned_text = "\n".join([line.strip() for line in plain_text.split("\n") if line.strip()])
             
             job_details = self.extract_job_details_with_ai(cleaned_text)
-            pushed = self.push_to_laravel(platform_name, job_details, url)
+            pushed = self.push_to_laravel(platform_name, job_details, norm_url)
             if pushed: 
                 successful_pushes += 1
-                self._mark_url_processed(url)
+                self._mark_url_processed(norm_url)
 
         return successful_pushes
