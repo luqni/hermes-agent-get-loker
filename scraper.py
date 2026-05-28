@@ -18,7 +18,7 @@ logger = logging.getLogger("hermes.scraper")
 
 PLATFORM_CONFIGS = {
     'LinkedIn': {
-        'search_url': "https://www.linkedin.com/jobs/search?location=Indonesia&geoId=102478259&f_TPR=r604800",
+        'search_url': "https://www.linkedin.com/jobs/search?keywords=loker%20indonesia&location=Indonesia&geoId=102478259&f_TPR=r604800",
         'fallback_query': "site:linkedin.com/jobs/view/ \"Indonesia\" \"loker\"",
         'use_browser': True
     },
