@@ -62,18 +62,29 @@ class HermesScraper:
         self.visited_urls = set()
         self._load_visited_urls()
 
+    def _normalize_url(self, url: str) -> str:
+        import urllib.parse
+        parsed = urllib.parse.urlparse(url)
+        if 'indeed.com' in parsed.netloc:
+            qs = urllib.parse.parse_qs(parsed.query)
+            if 'jk' in qs:
+                return f"{parsed.scheme}://{parsed.netloc}{parsed.path}?jk={qs['jk'][0]}"
+        return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
     def _load_visited_urls(self):
         import os
         if os.path.exists(self.visited_file):
             with open(self.visited_file, "r", encoding="utf-8") as f:
                 for line in f:
-                    self.visited_urls.add(line.strip())
+                    if line.strip():
+                        self.visited_urls.add(self._normalize_url(line.strip()))
 
     def _mark_url_processed(self, url: str):
-        if url not in self.visited_urls:
-            self.visited_urls.add(url)
+        norm_url = self._normalize_url(url)
+        if norm_url not in self.visited_urls:
+            self.visited_urls.add(norm_url)
             with open(self.visited_file, "a", encoding="utf-8") as f:
-                f.write(url + "\n")
+                f.write(norm_url + "\n")
 
     def fetch_page_content(self, url: str, use_browser: bool = False) -> str:
         if not use_browser:
@@ -177,10 +188,13 @@ class HermesScraper:
                 raw_urls_for_regex.append(href)
 
         if not links:
+            logger.warning(f"No raw links found in HTML for {platform_name}. Possibly blocked by Cloudflare or CAPTCHA.")
             return []
         if not settings.GEMINI_API_KEY:
             return []
 
+        logger.info(f"Found {len(links)} raw links on {platform_name}. Sending to AI for filtering...")
+        
         system_instruction = "You are an expert web scraper assistant. You must output a JSON array of strings."
         prompt = (
             f"Analyze this list of links crawled from {platform_name}.\n"
@@ -363,8 +377,9 @@ class HermesScraper:
             logger.info(f"Processing job [{index+1}/{len(target_urls)}]: {url}")
             if "google.com" in url: continue
             
-            if url in self.visited_urls:
-                logger.info(f"⏭️ Skipping already processed job: {url}")
+            norm_url = self._normalize_url(url)
+            if norm_url in self.visited_urls:
+                logger.info(f"⏭️ Skipping already processed job: {norm_url}")
                 continue
 
             detail_html = self.fetch_page_content(url, use_browser=config['use_browser'])
