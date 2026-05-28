@@ -310,15 +310,32 @@ class HermesScraper:
         if not settings.GEMINI_API_KEY:
             return self._mock_fallback(raw_text, "API Key Missing")
 
-        system_instruction = "You are a JSON job data extractor. You must only output a valid JSON object."
+        system_instruction = (
+            "You are a strict data extraction AI. Your ONLY job is to convert raw webpage text "
+            "into a flawless, minified JSON object without any conversational text or markdown wrappers."
+        )
+
         prompt = (
-            "Extract the following job posting into a valid JSON object with EXACTLY these keys: "
-            "\"job_title\" (string), \"company_name\" (string, use null if not found), "
-            "\"company_logo\" (string URL, use null if not found), "
-            "\"requirements\" (array of strings), "
-            "\"location\" (string, default to Indonesia if not specified), "
-            "\"posted_at\" (string, extract the date or time the job was posted, return null if not found). "
-            "CRITICAL: Do not wrap response in markdown blocks. Return raw JSON string only."
+            "Carefully analyze the raw job posting text provided below and extract the information "
+            "into a valid JSON object with EXACTLY these keys and strict formatting rules:\n\n"
+            
+            "- \"job_title\": (string) The exact title of the job position.\n"
+            "- \"company_name\": (string or null) The official company name. Return null if not found.\n"
+            "- \"company_logo\": (string URL or null) Clean absolute URL of the company logo image. Return null if not found.\n"
+            "- \"location\": (string) Specific city or region (e.g., 'Jakarta', 'Bandung'). Default to 'Indonesia' if generic or not specified.\n"
+            
+            "- \"posted_at\": (string or null) The estimated post date in YYYY-MM-DD format based on today's date (May 28, 2026). "
+            "If the text says relative time like '3 days ago', calculate it. Return null if completely unknown.\n"
+            
+            "- \"requirements\": (array of strings) A clean list of qualifications, skills, or job descriptions. "
+            "Break down long paragraphs into short, distinct array elements. Do not leave this array empty; if no specific "
+            "requirements are found, summarize the job responsibilities into 2-3 points.\n\n"
+            
+            "CRITICAL RULES:\n"
+            "1. Do NOT wrap the output in ```json ... ``` markdown blocks.\n"
+            "2. Ensure all quotes inside string values are properly escaped (\\\") to prevent invalid JSON.\n"
+            "3. Respond ONLY with the raw JSON object string starting with { and ending with }.\n\n"
+            f"Raw Text:\n{raw_text[:4000]}"
         )
         prompt_text = f"{prompt}\n\nRaw Text:\n{raw_text[:4000]}"
 
