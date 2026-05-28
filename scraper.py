@@ -22,26 +22,26 @@ PLATFORM_CONFIGS = {
         'fallback_query': "site:linkedin.com/jobs/view/ \"Indonesia\" \"loker\"",
         'use_browser': True
     },
-    'JobStreet': {
-        'search_url': "https://id.jobstreet.com/id/jobs?daterange=7",
-        'fallback_query': "site:id.jobstreet.com/id/job/ \"loker terbaru\"",
-        'use_browser': True
-    },
-    'Indeed': {
-        'search_url': "https://id.indeed.com/jobs?q=dibutuhkan+segera&l=Indonesia",
-        'fallback_query': "site:id.indeed.com/viewjob/ OR site:id.indeed.com/rc/clk",
-        'use_browser': True
-    },
-    'Karir.com': {
-        'search_url': "https://www.karir.com/search",
-        'fallback_query': "site:karir.com/opportunities/",
-        'use_browser': False
-    },
-    'Loker.id': {
-        'search_url': "https://www.loker.id/cari-lowongan-kerja",
-        'fallback_query': "site:loker.id/lowongan/",
-        'use_browser': False
-    },
+    # 'JobStreet': {
+    #     'search_url': "https://id.jobstreet.com/id/jobs?daterange=7",
+    #     'fallback_query': "site:id.jobstreet.com/id/job/ \"loker terbaru\"",
+    #     'use_browser': True
+    # },
+    # 'Indeed': {
+    #     'search_url': "https://id.indeed.com/jobs?q=dibutuhkan+segera&l=Indonesia",
+    #     'fallback_query': "site:id.indeed.com/viewjob/ OR site:id.indeed.com/rc/clk",
+    #     'use_browser': True
+    # },
+    # 'Karir.com': {
+    #     'search_url': "https://www.karir.com/search",
+    #     'fallback_query': "site:karir.com/opportunities/",
+    #     'use_browser': False
+    # },
+    # 'Loker.id': {
+    #     'search_url': "https://www.loker.id/cari-lowongan-kerja",
+    #     'fallback_query': "site:loker.id/lowongan/",
+    #     'use_browser': False
+    # },
     'Karirhub Kemnaker': {
         'search_url': "https://karirhub.kemnaker.go.id/",
         'fallback_query': "site:karirhub.kemnaker.go.id/lowongan/",
@@ -225,14 +225,14 @@ class HermesScraper:
                         if u.startswith('/'):
                             if 'jobstreet' in platform_key:
                                 u = "https://id.jobstreet.com" + u
-                            elif 'indeed' in platform_key:
-                                u = "https://id.indeed.com" + u
-                            elif 'linkedin' in platform_key:
-                                u = "https://www.linkedin.com" + u
-                            elif 'karir.com' in platform_key:
-                                u = "https://www.karir.com" + u
-                            elif 'loker.id' in platform_key:
-                                u = "https://www.loker.id" + u
+                            # elif 'indeed' in platform_key:
+                            #     u = "https://id.indeed.com" + u
+                            # elif 'linkedin' in platform_key:
+                            #     u = "https://www.linkedin.com" + u
+                            # elif 'karir.com' in platform_key:
+                            #     u = "https://www.karir.com" + u
+                            # elif 'loker.id' in platform_key:
+                            #     u = "https://www.loker.id" + u
                             elif 'karirhub' in platform_key:
                                 u = "https://karirhub.kemnaker.go.id" + u
                         cleaned_urls.append(u)
