@@ -293,7 +293,8 @@ class HermesScraper:
             "\"job_title\" (string), \"company_name\" (string, use null if not found), "
             "\"company_logo\" (string URL, use null if not found), "
             "\"requirements\" (array of strings), "
-            "\"location\" (string, default to Indonesia if not specified). "
+            "\"location\" (string, default to Indonesia if not specified), "
+            "\"posted_at\" (string, extract the date or time the job was posted, return null if not found). "
             "CRITICAL: Do not wrap response in markdown blocks. Return raw JSON string only."
         )
         prompt_text = f"{prompt}\n\nRaw Text:\n{raw_text[:4000]}"
@@ -329,7 +330,8 @@ class HermesScraper:
             "company_name": "Under Verification",
             "company_logo": None,
             "requirements": ["Kendala ekstraksi AI.", f"Alasan: {reason}"],
-            "location": "Indonesia"
+            "location": "Indonesia",
+            "posted_at": None
         }
 
     def push_to_laravel(self, platform_name: str, job_data: dict, source_url: str) -> bool:
@@ -342,7 +344,8 @@ class HermesScraper:
             "company_logo": job_data.get("company_logo"),
             "requirements": job_data.get("requirements", []),
             "source_url": source_url,
-            "location": job_data.get("location", "Indonesia")
+            "location": job_data.get("location", "Indonesia"),
+            "posted_at": job_data.get("posted_at")
         }
         try:
             response = self.client.post(webhook_url, json=payload, headers=headers)
