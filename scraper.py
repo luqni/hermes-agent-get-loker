@@ -43,20 +43,37 @@ PLATFORM_CONFIGS = {
         'use_browser': False
     },
     'Karirhub Kemnaker': {
-        'search_url': "https://karirhub.kemnaker.go.id/vacancies",
-        'fallback_query': "site:karirhub.kemnaker.go.id/vacancies/",
-        'use_browser': False
+        'search_url': "https://karirhub.kemnaker.go.id/",
+        'fallback_query': "site:karirhub.kemnaker.go.id/lowongan/",
+        'use_browser': True
     }
 }
 
 class HermesScraper:
     def __init__(self):
+        logger.info(f"HermesScraper initialized. AI Provider: {settings.AI_PROVIDER}, Configured Model: {settings.GEMINI_MODEL}")
         self.client = httpx.Client(
             headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             },
             timeout=30.0
         )
+        self.visited_file = "scraped_jobs.txt"
+        self.visited_urls = set()
+        self._load_visited_urls()
+
+    def _load_visited_urls(self):
+        import os
+        if os.path.exists(self.visited_file):
+            with open(self.visited_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    self.visited_urls.add(line.strip())
+
+    def _mark_url_processed(self, url: str):
+        if url not in self.visited_urls:
+            self.visited_urls.add(url)
+            with open(self.visited_file, "a", encoding="utf-8") as f:
+                f.write(url + "\n")
 
     def fetch_page_content(self, url: str, use_browser: bool = False) -> str:
         if not use_browser:
@@ -72,6 +89,7 @@ class HermesScraper:
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=True)
                 context = browser.new_context(
+                    ignore_https_errors=True,
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
                     viewport={"width": 1366, "height": 768}
                 )
@@ -130,6 +148,8 @@ class HermesScraper:
         """Helper to dynamically extract raw text content from OpenRouter or Gemini response."""
         try:
             if settings.AI_PROVIDER.lower() == "openrouter":
+                actual_model = response_json.get('model', 'unknown')
+                logger.info(f"OpenRouter actual model used for this request: {actual_model}")
                 return response_json['choices'][0]['message']['content']
             else:
                 return response_json['candidates'][0]['content']['parts'][0]['text']
@@ -141,8 +161,8 @@ class HermesScraper:
         """[CONFIGURABLE] Extracts job URLs using the selected AI Provider or switches to backup."""
         regex_fallbacks = {
             'LinkedIn': r'linkedin\.com/jobs/view/[0-9]+',
-            'JobStreet': r'jobstreet\.(?:com|co\.id)/[^"\'\s<>]+?/job/[0-9]+',
-            'Indeed': r'indeed\.com/(?:rc/clk|viewjob)\?[^"\'\s<>]+'
+            'JobStreet': r'(?:jobstreet\.(?:com|co\.id))?/[^"\'\s<>]+?/job/[0-9]+',
+            'Indeed': r'(?:indeed\.com)?/(?:rc/clk|viewjob)\?[^"\'\s<>]+'
         }
 
         soup = BeautifulSoup(html_content, 'html.parser')
@@ -183,12 +203,30 @@ class HermesScraper:
                     last_bracket = res_text.rfind(']')
                     if first_bracket != -1 and last_bracket != -1:
                         res_text = res_text[first_bracket:last_bracket+1]
-                    return json.loads(res_text)
+                    ai_urls = json.loads(res_text)
+                    cleaned_urls = []
+                    platform_key = platform_name.lower()
+                    for u in ai_urls:
+                        if u.startswith('/'):
+                            if 'jobstreet' in platform_key:
+                                u = "https://id.jobstreet.com" + u
+                            elif 'indeed' in platform_key:
+                                u = "https://id.indeed.com" + u
+                            elif 'linkedin' in platform_key:
+                                u = "https://www.linkedin.com" + u
+                            elif 'karir.com' in platform_key:
+                                u = "https://www.karir.com" + u
+                            elif 'loker.id' in platform_key:
+                                u = "https://www.loker.id" + u
+                            elif 'karirhub' in platform_key:
+                                u = "https://karirhub.kemnaker.go.id" + u
+                        cleaned_urls.append(u)
+                    return cleaned_urls
                 elif response.status_code in [429, 503]:
                     # Perbaikan: Menghapus variabel 'index' yang tidak ada di fungsi ini
                     # Percobaan 1 = 5s, Percobaan 2 = 10s, Percobaan 3 = 20s, Percobaan 4 = 40s
                     sleep_time = 5 * (2 ** attempt) 
-                    logger.warning(f"OpenRouter 429 (Rate Limit) untuk Gemma. Mencoba kembali dalam {sleep_time} detik...")
+                    logger.warning(f"OpenRouter 429 (Rate Limit) untuk model {settings.GEMINI_MODEL}. Mencoba kembali dalam {sleep_time} detik...")
                     time.sleep(sleep_time)
             except Exception as e:
                 logger.error(f"AI Link extraction attempt {attempt+1} failed: {str(e)}")
@@ -202,7 +240,7 @@ class HermesScraper:
         if fallback_regex:
             matched_urls = []
             for url_str in raw_urls_for_regex:
-                if "[google.com/url](https://google.com/url)?" in url_str or "/url?" in url_str:
+                if "google.com/url" in url_str or "/url?" in url_str:
                     match_clean = re.search(r'url=(https?://[^&]+)', url_str)
                     if match_clean:
                         import urllib.parse
@@ -211,9 +249,9 @@ class HermesScraper:
                 if re.search(fallback_regex, url_str):
                     if url_str.startswith('/'):
                         if 'jobstreet' in platform_key.lower():
-                            url_str = "[https://id.jobstreet.com](https://id.jobstreet.com)" + url_str
+                            url_str = "https://id.jobstreet.com" + url_str
                         elif 'indeed' in platform_key.lower():
-                            url_str = "[https://id.indeed.com](https://id.indeed.com)" + url_str
+                            url_str = "https://id.indeed.com" + url_str
                     matched_urls.append(url_str)
             return list(set(matched_urls))
             
@@ -324,6 +362,10 @@ class HermesScraper:
         for index, url in enumerate(target_urls):
             logger.info(f"Processing job [{index+1}/{len(target_urls)}]: {url}")
             if "google.com" in url: continue
+            
+            if url in self.visited_urls:
+                logger.info(f"⏭️ Skipping already processed job: {url}")
+                continue
 
             detail_html = self.fetch_page_content(url, use_browser=config['use_browser'])
             if not detail_html: continue
@@ -337,6 +379,8 @@ class HermesScraper:
             
             job_details = self.extract_job_details_with_ai(cleaned_text)
             pushed = self.push_to_laravel(platform_name, job_details, url)
-            if pushed: successful_pushes += 1
+            if pushed: 
+                successful_pushes += 1
+                self._mark_url_processed(url)
 
         return successful_pushes
