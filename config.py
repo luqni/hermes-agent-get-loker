@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     # --- TAMBAHKAN BARIS INI ---
     AI_PROVIDER: str = os.getenv("AI_PROVIDER", "gemini") 
+    DATA_DIR: str = os.getenv("DATA_DIR", ".")
 
     class Config:
         env_file = ".env"

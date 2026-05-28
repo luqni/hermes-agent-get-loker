@@ -59,8 +59,7 @@ class HermesScraper:
             timeout=30.0
         )
         import os
-        data_dir = os.environ.get("DATA_DIR", ".")
-        self.visited_file = os.path.join(data_dir, "scraped_jobs.txt")
+        self.visited_file = os.path.join(settings.DATA_DIR, "scraped_jobs.txt")
         self.visited_urls = set()
         self._load_visited_urls()
 
