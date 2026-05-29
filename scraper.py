@@ -2,6 +2,9 @@ import re
 import json
 import logging
 import time
+import os
+import urllib.parse
+from datetime import datetime
 from bs4 import BeautifulSoup
 import httpx
 from playwright.sync_api import sync_playwright
@@ -22,26 +25,6 @@ PLATFORM_CONFIGS = {
         'fallback_query': "site:linkedin.com/jobs/view/ \"Indonesia\" \"loker\"",
         'use_browser': True
     },
-    # 'JobStreet': {
-    #     'search_url': "https://id.jobstreet.com/id/jobs?daterange=7",
-    #     'fallback_query': "site:id.jobstreet.com/id/job/ \"loker terbaru\"",
-    #     'use_browser': True
-    # },
-    # 'Indeed': {
-    #     'search_url': "https://id.indeed.com/jobs?q=dibutuhkan+segera&l=Indonesia",
-    #     'fallback_query': "site:id.indeed.com/viewjob/ OR site:id.indeed.com/rc/clk",
-    #     'use_browser': True
-    # },
-    # 'Karir.com': {
-    #     'search_url': "https://www.karir.com/search",
-    #     'fallback_query': "site:karir.com/opportunities/",
-    #     'use_browser': False
-    # },
-    # 'Loker.id': {
-    #     'search_url': "https://www.loker.id/cari-lowongan-kerja",
-    #     'fallback_query': "site:loker.id/lowongan/",
-    #     'use_browser': False
-    # },
     'Karirhub Kemnaker': {
         'search_url': "https://karirhub.kemnaker.go.id/",
         'fallback_query': "site:karirhub.kemnaker.go.id/lowongan/",
@@ -58,14 +41,23 @@ class HermesScraper:
             },
             timeout=30.0
         )
-        import os
         self.visited_file = os.path.join(settings.DATA_DIR, "scraped_jobs.txt")
         self.visited_urls = set()
         self._load_visited_urls()
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def close(self):
+        """Menutup sesi HTTPX client secara aman untuk mencegah resource leak."""
+        if hasattr(self, 'client') and self.client:
+            self.client.close()
+            logger.info("HTTPX client closed successfully.")
+
     def _normalize_url(self, url: str) -> str:
-        import urllib.parse
-        import re
         parsed = urllib.parse.urlparse(url)
         netloc = parsed.netloc.lower()
         
@@ -88,14 +80,13 @@ class HermesScraper:
             return f"https://id.indeed.com{parsed.path}"
 
         elif 'karirhub' in netloc:
-            match = re.search(r'/lowongan/(\d+)', parsed.path)
+            match = re.search(r'/lowongan/([a-zA-Z0-9-]+)', parsed.path)
             if match:
                 return f"https://karirhub.kemnaker.go.id/lowongan/{match.group(1)}"
 
         return f"{parsed.scheme}://{netloc}{parsed.path}"
 
     def _load_visited_urls(self):
-        import os
         if os.path.exists(self.visited_file):
             with open(self.visited_file, "r", encoding="utf-8") as f:
                 for line in f:
@@ -144,7 +135,6 @@ class HermesScraper:
             return ""
 
     def _prepare_ai_request(self, system_instruction: str, prompt_text: str) -> tuple:
-        """Helper to dynamically format URL, headers, and payload based on AI_PROVIDER."""
         provider = settings.AI_PROVIDER.lower()
         model = settings.GEMINI_MODEL
         key = settings.GEMINI_API_KEY
@@ -154,7 +144,6 @@ class HermesScraper:
             headers = {
                 "Authorization": f"Bearer {key}",
                 "Content-Type": "application/json",
-                # FIX HEADERS: Gunakan domain publik standar agar OpenRouter tidak memblokir localhost
                 "HTTP-Referer": "https://hermes-agent.internal", 
                 "X-Title": "Hermes Autonomous Job Scraper Bot"
             }
@@ -164,10 +153,8 @@ class HermesScraper:
                     {"role": "system", "content": system_instruction},
                     {"role": "user", "content": prompt_text}
                 ],
-                # Beberapa model free-tier sensitif terhadap response_format, 
-                # kita biarkan prompt natural yang memaksa bentuk JSON agar lebih aman
             }
-        else: # Default: gemini native
+        else:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
             headers = {"Content-Type": "application/json"}
             payload = {
@@ -179,7 +166,6 @@ class HermesScraper:
         return url, headers, payload
 
     def _parse_ai_response(self, response_json: dict) -> str:
-        """Helper to dynamically extract raw text content from OpenRouter or Gemini response."""
         try:
             if settings.AI_PROVIDER.lower() == "openrouter":
                 actual_model = response_json.get('model', 'unknown')
@@ -192,11 +178,11 @@ class HermesScraper:
             return ""
 
     def extract_job_urls_with_ai(self, html_content: str, platform_name: str) -> list:
-        """[CONFIGURABLE] Extracts job URLs using the selected AI Provider or switches to backup."""
         regex_fallbacks = {
             'LinkedIn': r'linkedin\.com/jobs/view/[0-9]+',
             'JobStreet': r'(?:jobstreet\.(?:com|co\.id))?/[^"\'\s<>]+?/job/[0-9]+',
-            'Indeed': r'(?:indeed\.com)?/(?:rc/clk|viewjob)\?[^"\'\s<>]+'
+            'Indeed': r'(?:indeed\.com)?/(?:rc/clk|viewjob)\?[^"\'\s<>]+',
+            'Karirhub Kemnaker': r'karirhub\.kemnaker\.go\.id/lowongan/[a-zA-Z0-9-]+'
         }
 
         soup = BeautifulSoup(html_content, 'html.parser')
@@ -211,7 +197,7 @@ class HermesScraper:
                 raw_urls_for_regex.append(href)
 
         if not links:
-            logger.warning(f"No raw links found in HTML for {platform_name}. Possibly blocked by Cloudflare or CAPTCHA.")
+            logger.warning(f"No raw links found in HTML for {platform_name}. Possibly blocked.")
             return []
         if not settings.GEMINI_API_KEY:
             return []
@@ -228,7 +214,6 @@ class HermesScraper:
 
         url, headers, payload = self._prepare_ai_request(system_instruction, prompt)
 
-        # Retry loop for stability
         for attempt in range(3):
             try:
                 response = self.client.post(url, json=payload, headers=headers, timeout=30.0)
@@ -246,24 +231,14 @@ class HermesScraper:
                     for u in ai_urls:
                         if u.startswith('/'):
                             if 'jobstreet' in platform_key:
-                                u = "https://id.jobstreet.com" + u
-                            # elif 'indeed' in platform_key:
-                            #     u = "https://id.indeed.com" + u
-                            # elif 'linkedin' in platform_key:
-                            #     u = "https://www.linkedin.com" + u
-                            # elif 'karir.com' in platform_key:
-                            #     u = "https://www.karir.com" + u
-                            # elif 'loker.id' in platform_key:
-                            #     u = "https://www.loker.id" + u
+                                u = "[https://id.jobstreet.com](https://id.jobstreet.com)" + u
                             elif 'karirhub' in platform_key:
-                                u = "https://karirhub.kemnaker.go.id" + u
+                                u = "[https://karirhub.kemnaker.go.id](https://karirhub.kemnaker.go.id)" + u
                         cleaned_urls.append(u)
                     return cleaned_urls
                 elif response.status_code in [429, 503]:
-                    # Perbaikan: Menghapus variabel 'index' yang tidak ada di fungsi ini
-                    # Percobaan 1 = 5s, Percobaan 2 = 10s, Percobaan 3 = 20s, Percobaan 4 = 40s
                     sleep_time = 5 * (2 ** attempt) 
-                    logger.warning(f"OpenRouter 429 (Rate Limit) untuk model {settings.GEMINI_MODEL}. Mencoba kembali dalam {sleep_time} detik...")
+                    logger.warning(f"OpenRouter 429/503 untuk model {settings.GEMINI_MODEL}. Mencoba dalam {sleep_time} detik...")
                     time.sleep(sleep_time)
             except Exception as e:
                 logger.error(f"AI Link extraction attempt {attempt+1} failed: {str(e)}")
@@ -271,42 +246,44 @@ class HermesScraper:
 
         # EMERGENCY FALLBACK REGEX
         logger.warning(f"AI Engine completely unavailable. Activating Regex Emergency Backup...")
-        platform_key = 'LinkedIn' if 'linkedin' in platform_name.lower() else ('JobStreet' if 'jobstreet' in platform_name.lower() else 'Indeed')
+        
+        # Penentuan platform key yang lebih aman
+        lower_name = platform_name.lower()
+        if 'linkedin' in lower_name: platform_key = 'LinkedIn'
+        elif 'jobstreet' in lower_name: platform_key = 'JobStreet'
+        elif 'indeed' in lower_name: platform_key = 'Indeed'
+        else: platform_key = 'Karirhub Kemnaker'
+
         fallback_regex = regex_fallbacks.get(platform_key)
         
         if fallback_regex:
             matched_urls = []
             for url_str in raw_urls_for_regex:
-                if "google.com/url" in url_str or "/url?" in url_str:
-                    match_clean = re.search(r'url=(https?://[^&]+)', url_str)
+                if "[google.com/url](https://google.com/url)" in url_str or "/url?" in url_str:
+                    match_clean = re.search(r'[?&]url=(https?://[^&]+)', url_str)
                     if match_clean:
-                        import urllib.parse
                         url_str = urllib.parse.unquote(match_clean.group(1))
 
                 if re.search(fallback_regex, url_str):
                     if url_str.startswith('/'):
                         if 'jobstreet' in platform_key.lower():
-                            url_str = "https://id.jobstreet.com" + url_str
+                            url_str = "[https://id.jobstreet.com](https://id.jobstreet.com)" + url_str
                         elif 'indeed' in platform_key.lower():
-                            url_str = "https://id.indeed.com" + url_str
+                            url_str = "[https://id.indeed.com](https://id.indeed.com)" + url_str
+                        elif 'karirhub' in platform_key.lower():
+                            url_str = "[https://karirhub.kemnaker.go.id](https://karirhub.kemnaker.go.id)" + url_str
                     matched_urls.append(url_str)
             return list(set(matched_urls))
             
         return []
 
     def self_healing_google_search(self, platform_name: str, query: str) -> str:
-        """[SISTEM SELF-HEALING] Jika platform utama terblokir, cari memutar lewat Google."""
-        import urllib.parse
-        
-        # Meng-encode karakter spasi dan tanda kutip secara aman agar tidak merusak URL
         encoded_query = urllib.parse.quote(query)
-        google_url = f"https://www.google.com/search?q={encoded_query}"
-        
+        google_url = f"[https://www.google.com/search?q=](https://www.google.com/search?q=){encoded_query}"
         logger.info(f"== [Self-Healing Active] == Triggering Google Search alternative for {platform_name}")
         return self.fetch_page_content(google_url, use_browser=True)
 
     def extract_job_details_with_ai(self, raw_text: str) -> dict:
-        """[CONFIGURABLE] Parses job text into clean JSON format using selected Provider."""
         if not settings.GEMINI_API_KEY:
             return self._mock_fallback(raw_text, "API Key Missing")
 
@@ -314,6 +291,9 @@ class HermesScraper:
             "You are a strict data extraction AI. Your ONLY job is to convert raw webpage text "
             "into a flawless, minified JSON object without any conversational text or markdown wrappers."
         )
+
+        # Menghitung tanggal hari ini secara dinamis sesuai waktu eksekusi skrip
+        today_str = datetime.today().strftime('%B %d, %Y')
 
         prompt = (
             "Carefully analyze the raw job posting text provided below and extract the information "
@@ -324,7 +304,7 @@ class HermesScraper:
             "- \"company_logo\": (string URL or null) Clean absolute URL of the company logo image. Return null if not found.\n"
             "- \"location\": (string) Specific city or region (e.g., 'Jakarta', 'Bandung'). Default to 'Indonesia' if generic or not specified.\n"
             
-            "- \"posted_at\": (string or null) The estimated post date in YYYY-MM-DD format based on today's date (May 28, 2026). "
+            f"- \"posted_at\": (string or null) The estimated post date in YYYY-MM-DD format based on today's date ({today_str}). "
             "If the text says relative time like '3 days ago', calculate it. Return null if completely unknown.\n"
             
             "- \"requirements\": (array of strings) A clean list of qualifications, skills, or job descriptions. "
@@ -337,9 +317,8 @@ class HermesScraper:
             "3. Respond ONLY with the raw JSON object string starting with { and ending with }.\n\n"
             f"Raw Text:\n{raw_text[:4000]}"
         )
-        prompt_text = f"{prompt}\n\nRaw Text:\n{raw_text[:4000]}"
 
-        url, headers, payload = self._prepare_ai_request(system_instruction, prompt_text)
+        url, headers, payload = self._prepare_ai_request(system_instruction, prompt)
 
         try:
             response = self.client.post(url, json=payload, headers=headers, timeout=20.0)
@@ -449,3 +428,8 @@ class HermesScraper:
                 self._mark_url_processed(norm_url)
 
         return successful_pushes
+
+# Contoh Cara Menjalankan dengan Context Manager Aman:
+if __name__ == "__main__":
+    with HermesScraper() as scraper:
+        scraper.scrape_platform('LinkedIn', max_jobs=3)
