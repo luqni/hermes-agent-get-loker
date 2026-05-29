@@ -25,6 +25,26 @@ PLATFORM_CONFIGS = {
         'fallback_query': "site:linkedin.com/jobs/view/ \"Indonesia\" \"loker\"",
         'use_browser': True
     },
+    'JobStreet': {
+        'search_url': "https://id.jobstreet.com/id/jobs?daterange=7",
+        'fallback_query': "site:id.jobstreet.com/id/job/ \"loker terbaru\"",
+        'use_browser': True
+    },
+    'Indeed': {
+        'search_url': "https://id.indeed.com/jobs?q=dibutuhkan+segera&l=Indonesia",
+        'fallback_query': "site:id.indeed.com/viewjob/ OR site:id.indeed.com/rc/clk",
+        'use_browser': True
+    },
+    'Karir.com': {
+        'search_url': "https://www.karir.com/search",
+        'fallback_query': "site:karir.com/opportunities/",
+        'use_browser': False
+    },
+    'Loker.id': {
+        'search_url': "https://www.loker.id/cari-lowongan-kerja",
+        'fallback_query': "site:loker.id/lowongan/",
+        'use_browser': False
+    },
     'Karirhub Kemnaker': {
         'search_url': "https://karirhub.kemnaker.go.id/",
         'fallback_query': "site:karirhub.kemnaker.go.id/lowongan/",
@@ -70,14 +90,20 @@ class HermesScraper:
         elif 'jobstreet' in netloc:
             match = re.search(r'/job/(?:.*?-)?(\d+)', parsed.path)
             if match:
-                return f"https://www.jobstreet.co.id/id/job/{match.group(1)}"
-            return f"https://www.jobstreet.co.id{parsed.path}"
+                return f"https://id.jobstreet.com/id/job/{match.group(1)}"
+            return f"https://id.jobstreet.com{parsed.path}"
             
         elif 'indeed.com' in netloc:
             qs = urllib.parse.parse_qs(parsed.query)
             if 'jk' in qs:
                 return f"https://id.indeed.com/viewjob?jk={qs['jk'][0]}"
             return f"https://id.indeed.com{parsed.path}"
+
+        elif 'karir.com' in netloc:
+            return f"https://www.karir.com{parsed.path}"
+
+        elif 'loker.id' in netloc:
+            return f"https://www.loker.id{parsed.path}"
 
         elif 'karirhub' in netloc:
             match = re.search(r'/lowongan/([a-zA-Z0-9-]+)', parsed.path)
@@ -182,6 +208,8 @@ class HermesScraper:
             'LinkedIn': r'linkedin\.com/jobs/view/[0-9]+',
             'JobStreet': r'(?:jobstreet\.(?:com|co\.id))?/[^"\'\s<>]+?/job/[0-9]+',
             'Indeed': r'(?:indeed\.com)?/(?:rc/clk|viewjob)\?[^"\'\s<>]+',
+            'Karir.com': r'karir\.com/opportunities/[0-9]+',
+            'Loker.id': r'loker\.id/lowongan/[^"\'\s<>]+',
             'Karirhub Kemnaker': r'karirhub\.kemnaker\.go\.id/lowongan/[a-zA-Z0-9-]+'
         }
 
@@ -232,6 +260,14 @@ class HermesScraper:
                         if u.startswith('/'):
                             if 'jobstreet' in platform_key:
                                 u = "[https://id.jobstreet.com](https://id.jobstreet.com)" + u
+                            elif 'indeed' in platform_key:
+                                u = "[https://id.indeed.com](https://id.indeed.com)" + u
+                            elif 'linkedin' in platform_key:
+                                u = "[https://www.linkedin.com](https://www.linkedin.com)" + u
+                            elif 'karir.com' in platform_key:
+                                u = "[https://www.karir.com](https://www.karir.com)" + u
+                            elif 'loker.id' in platform_key:
+                                u = "[https://www.loker.id](https://www.loker.id)" + u
                             elif 'karirhub' in platform_key:
                                 u = "[https://karirhub.kemnaker.go.id](https://karirhub.kemnaker.go.id)" + u
                         cleaned_urls.append(u)
@@ -247,11 +283,12 @@ class HermesScraper:
         # EMERGENCY FALLBACK REGEX
         logger.warning(f"AI Engine completely unavailable. Activating Regex Emergency Backup...")
         
-        # Penentuan platform key yang lebih aman
         lower_name = platform_name.lower()
         if 'linkedin' in lower_name: platform_key = 'LinkedIn'
         elif 'jobstreet' in lower_name: platform_key = 'JobStreet'
         elif 'indeed' in lower_name: platform_key = 'Indeed'
+        elif 'karir.com' in lower_name: platform_key = 'Karir.com'
+        elif 'loker.id' in lower_name: platform_key = 'Loker.id'
         else: platform_key = 'Karirhub Kemnaker'
 
         fallback_regex = regex_fallbacks.get(platform_key)
@@ -270,6 +307,12 @@ class HermesScraper:
                             url_str = "[https://id.jobstreet.com](https://id.jobstreet.com)" + url_str
                         elif 'indeed' in platform_key.lower():
                             url_str = "[https://id.indeed.com](https://id.indeed.com)" + url_str
+                        elif 'linkedin' in platform_key.lower():
+                            url_str = "[https://www.linkedin.com](https://www.linkedin.com)" + url_str
+                        elif 'karir.com' in platform_key.lower():
+                            url_str = "[https://www.karir.com](https://www.karir.com)" + url_str
+                        elif 'loker.id' in platform_key.lower():
+                            url_str = "[https://www.loker.id](https://www.loker.id)" + url_str
                         elif 'karirhub' in platform_key.lower():
                             url_str = "[https://karirhub.kemnaker.go.id](https://karirhub.kemnaker.go.id)" + url_str
                     matched_urls.append(url_str)
@@ -292,7 +335,6 @@ class HermesScraper:
             "into a flawless, minified JSON object without any conversational text or markdown wrappers."
         )
 
-        # Menghitung tanggal hari ini secara dinamis sesuai waktu eksekusi skrip
         today_str = datetime.today().strftime('%B %d, %Y')
 
         prompt = (
@@ -429,7 +471,12 @@ class HermesScraper:
 
         return successful_pushes
 
-# Contoh Cara Menjalankan dengan Context Manager Aman:
+# Contoh Cara Menjalankan Semua Platform Sekaligus secara Berurutan:
 if __name__ == "__main__":
     with HermesScraper() as scraper:
-        scraper.scrape_platform('LinkedIn', max_jobs=3)
+        for platform in PLATFORM_CONFIGS.keys():
+            try:
+                pushed_count = scraper.scrape_platform(platform, max_jobs=3)
+                logger.info(f"Successfully processed {pushed_count} jobs from {platform}")
+            except Exception as e:
+                logger.error(f"Fatal error scraping platform {platform}: {str(e)}")
