@@ -1,8 +1,9 @@
+import os
 import re
 import json
 import logging
 import time
-import os
+import random
 import urllib.parse
 from datetime import datetime
 from bs4 import BeautifulSoup
@@ -25,26 +26,6 @@ PLATFORM_CONFIGS = {
         'fallback_query': "site:linkedin.com/jobs/view/ \"Indonesia\" \"loker\"",
         'use_browser': True
     },
-    'JobStreet': {
-        'search_url': "https://id.jobstreet.com/id/jobs?daterange=7",
-        'fallback_query': "site:id.jobstreet.com/id/job/ \"loker terbaru\"",
-        'use_browser': True
-    },
-    'Indeed': {
-        'search_url': "https://id.indeed.com/jobs?q=dibutuhkan+segera&l=Indonesia",
-        'fallback_query': "site:id.indeed.com/viewjob/ OR site:id.indeed.com/rc/clk",
-        'use_browser': True
-    },
-    'Karir.com': {
-        'search_url': "https://www.karir.com/search",
-        'fallback_query': "site:karir.com/opportunities/",
-        'use_browser': False
-    },
-    'Loker.id': {
-        'search_url': "https://www.loker.id/cari-lowongan-kerja",
-        'fallback_query': "site:loker.id/lowongan/",
-        'use_browser': False
-    },
     'Karirhub Kemnaker': {
         'search_url': "https://karirhub.kemnaker.go.id/",
         'fallback_query': "site:karirhub.kemnaker.go.id/lowongan/",
@@ -65,52 +46,51 @@ class HermesScraper:
         self.visited_urls = set()
         self._load_visited_urls()
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
-
-    def close(self):
-        """Menutup sesi HTTPX client secara aman untuk mencegah resource leak."""
-        if hasattr(self, 'client') and self.client:
-            self.client.close()
-            logger.info("HTTPX client closed successfully.")
-
     def _normalize_url(self, url: str) -> str:
-        parsed = urllib.parse.urlparse(url)
-        netloc = parsed.netloc.lower()
-        
-        if 'linkedin.com' in netloc:
-            match = re.search(r'/jobs/view/(?:.*?-)?(\d+)', parsed.path)
-            if match:
-                return f"https://www.linkedin.com/jobs/view/{match.group(1)}"
-            return f"https://www.linkedin.com{parsed.path}"
+        try:
+            parsed = urllib.parse.urlparse(url)
+            netloc = parsed.netloc.lower()
+            path_lower = parsed.path.lower()
             
-        elif 'jobstreet' in netloc:
-            match = re.search(r'/job/(?:.*?-)?(\d+)', parsed.path)
-            if match:
-                return f"https://id.jobstreet.com/id/job/{match.group(1)}"
-            return f"https://id.jobstreet.com{parsed.path}"
-            
-        elif 'indeed.com' in netloc:
-            qs = urllib.parse.parse_qs(parsed.query)
-            if 'jk' in qs:
-                return f"https://id.indeed.com/viewjob?jk={qs['jk'][0]}"
-            return f"https://id.indeed.com{parsed.path}"
+            # --- FIX DUPLIKAT LINKEDIN ---
+            if 'linkedin.com' in netloc:
+                qs = urllib.parse.parse_qs(parsed.query)
+                if 'currentJobId' in qs:
+                    return f"https://www.linkedin.com/jobs/view/{qs['currentJobId'][0]}"
+                
+                # Ekstrak ID numerik (8-12 digit) dari path lowongan
+                match_id = re.search(r'/jobs/view/.*?(\d{8,12})', path_lower)
+                if match_id:
+                    return f"https://www.linkedin.com/jobs/view/{match_id.group(1)}"
+                
+                return f"https://www.linkedin.com{parsed.path.rstrip('/')}"
+                
+            # --- FIX DUPLIKAT JOBSTREET ---
+            elif 'jobstreet' in netloc:
+                match = re.search(r'/job/(?:.*?-)?(\d+)', path_lower)
+                if match:
+                    return f"https://www.jobstreet.co.id/id/job/{match.group(1)}"
+                return f"https://www.jobstreet.co.id{parsed.path.rstrip('/')}"
+                
+            # --- FIX DUPLIKAT INDEED ---
+            elif 'indeed.com' in netloc:
+                qs = urllib.parse.parse_qs(parsed.query)
+                if 'jk' in qs:
+                    return f"https://id.indeed.com/viewjob?jk={qs['jk'][0]}"
+                return f"https://id.indeed.com{parsed.path.rstrip('/')}"
 
-        elif 'karir.com' in netloc:
-            return f"https://www.karir.com{parsed.path}"
+            # --- FIX DUPLIKAT KARIRHUB KEMNAKER ---
+            elif 'karirhub' in netloc:
+                # Tangkap ID lowongan berupa alphanumeric/angka di dalam path /lowongan/ID
+                match = re.search(r'/lowongan/([a-zA-Z0-9-]+)', path_lower)
+                if match:
+                    return f"https://karirhub.kemnaker.go.id/lowongan/{match.group(1)}"
+                return f"https://karirhub.kemnaker.go.id{parsed.path.rstrip('/')}"
 
-        elif 'loker.id' in netloc:
-            return f"https://www.loker.id{parsed.path}"
-
-        elif 'karirhub' in netloc:
-            match = re.search(r'/lowongan/([a-zA-Z0-9-]+)', parsed.path)
-            if match:
-                return f"https://karirhub.kemnaker.go.id/lowongan/{match.group(1)}"
-
-        return f"{parsed.scheme}://{netloc}{parsed.path}"
+            return f"{parsed.scheme}://{netloc}{parsed.path.rstrip('/')}"
+        except Exception as e:
+            logger.error(f"Error normalizing URL {url}: {str(e)}")
+            return url
 
     def _load_visited_urls(self):
         if os.path.exists(self.visited_file):
@@ -149,9 +129,11 @@ class HermesScraper:
                     stealth_sync(page)
                     
                 page.goto(url, wait_until="domcontentloaded", timeout=45000)
-                page.wait_for_timeout(4000)
-                page.evaluate("window.scrollBy(0, 400)")
-                page.wait_for_timeout(2000)
+                
+                # --- FIX ANTI-BANNED: Jeda Acak Manusiawi ---
+                page.wait_for_timeout(random.randint(3000, 6000))
+                page.evaluate(f"window.scrollBy(0, {random.randint(350, 500)})")
+                page.wait_for_timeout(random.randint(2000, 4000))
                 
                 content = page.content()
                 browser.close()
@@ -207,10 +189,7 @@ class HermesScraper:
         regex_fallbacks = {
             'LinkedIn': r'linkedin\.com/jobs/view/[0-9]+',
             'JobStreet': r'(?:jobstreet\.(?:com|co\.id))?/[^"\'\s<>]+?/job/[0-9]+',
-            'Indeed': r'(?:indeed\.com)?/(?:rc/clk|viewjob)\?[^"\'\s<>]+',
-            'Karir.com': r'karir\.com/opportunities/[0-9]+',
-            'Loker.id': r'loker\.id/lowongan/[^"\'\s<>]+',
-            'Karirhub Kemnaker': r'karirhub\.kemnaker\.go\.id/lowongan/[a-zA-Z0-9-]+'
+            'Indeed': r'(?:indeed\.com)?/(?:rc/clk|viewjob)\?[^"\'\s<>]+'
         }
 
         soup = BeautifulSoup(html_content, 'html.parser')
@@ -225,7 +204,7 @@ class HermesScraper:
                 raw_urls_for_regex.append(href)
 
         if not links:
-            logger.warning(f"No raw links found in HTML for {platform_name}. Possibly blocked.")
+            logger.warning(f"No raw links found in HTML for {platform_name}. Possibly blocked by Cloudflare or CAPTCHA.")
             return []
         if not settings.GEMINI_API_KEY:
             return []
@@ -260,44 +239,27 @@ class HermesScraper:
                         if u.startswith('/'):
                             if 'jobstreet' in platform_key:
                                 u = "[https://id.jobstreet.com](https://id.jobstreet.com)" + u
-                            elif 'indeed' in platform_key:
-                                u = "[https://id.indeed.com](https://id.indeed.com)" + u
-                            elif 'linkedin' in platform_key:
-                                u = "[https://www.linkedin.com](https://www.linkedin.com)" + u
-                            elif 'karir.com' in platform_key:
-                                u = "[https://www.karir.com](https://www.karir.com)" + u
-                            elif 'loker.id' in platform_key:
-                                u = "[https://www.loker.id](https://www.loker.id)" + u
                             elif 'karirhub' in platform_key:
                                 u = "[https://karirhub.kemnaker.go.id](https://karirhub.kemnaker.go.id)" + u
                         cleaned_urls.append(u)
                     return cleaned_urls
                 elif response.status_code in [429, 503]:
                     sleep_time = 5 * (2 ** attempt) 
-                    logger.warning(f"OpenRouter 429/503 untuk model {settings.GEMINI_MODEL}. Mencoba dalam {sleep_time} detik...")
+                    logger.warning(f"OpenRouter 429 (Rate Limit) untuk model {settings.GEMINI_MODEL}. Mencoba kembali dalam {sleep_time} detik...")
                     time.sleep(sleep_time)
             except Exception as e:
                 logger.error(f"AI Link extraction attempt {attempt+1} failed: {str(e)}")
                 time.sleep(2)
 
-        # EMERGENCY FALLBACK REGEX
         logger.warning(f"AI Engine completely unavailable. Activating Regex Emergency Backup...")
-        
-        lower_name = platform_name.lower()
-        if 'linkedin' in lower_name: platform_key = 'LinkedIn'
-        elif 'jobstreet' in lower_name: platform_key = 'JobStreet'
-        elif 'indeed' in lower_name: platform_key = 'Indeed'
-        elif 'karir.com' in lower_name: platform_key = 'Karir.com'
-        elif 'loker.id' in lower_name: platform_key = 'Loker.id'
-        else: platform_key = 'Karirhub Kemnaker'
-
+        platform_key = 'LinkedIn' if 'linkedin' in platform_name.lower() else ('JobStreet' if 'jobstreet' in platform_name.lower() else 'Indeed')
         fallback_regex = regex_fallbacks.get(platform_key)
         
         if fallback_regex:
             matched_urls = []
             for url_str in raw_urls_for_regex:
                 if "[google.com/url](https://google.com/url)" in url_str or "/url?" in url_str:
-                    match_clean = re.search(r'[?&]url=(https?://[^&]+)', url_str)
+                    match_clean = re.search(r'url=(https?://[^&]+)', url_str)
                     if match_clean:
                         url_str = urllib.parse.unquote(match_clean.group(1))
 
@@ -305,16 +267,6 @@ class HermesScraper:
                     if url_str.startswith('/'):
                         if 'jobstreet' in platform_key.lower():
                             url_str = "[https://id.jobstreet.com](https://id.jobstreet.com)" + url_str
-                        elif 'indeed' in platform_key.lower():
-                            url_str = "[https://id.indeed.com](https://id.indeed.com)" + url_str
-                        elif 'linkedin' in platform_key.lower():
-                            url_str = "[https://www.linkedin.com](https://www.linkedin.com)" + url_str
-                        elif 'karir.com' in platform_key.lower():
-                            url_str = "[https://www.karir.com](https://www.karir.com)" + url_str
-                        elif 'loker.id' in platform_key.lower():
-                            url_str = "[https://www.loker.id](https://www.loker.id)" + url_str
-                        elif 'karirhub' in platform_key.lower():
-                            url_str = "[https://karirhub.kemnaker.go.id](https://karirhub.kemnaker.go.id)" + url_str
                     matched_urls.append(url_str)
             return list(set(matched_urls))
             
@@ -330,12 +282,13 @@ class HermesScraper:
         if not settings.GEMINI_API_KEY:
             return self._mock_fallback(raw_text, "API Key Missing")
 
+        # --- FIX KETERANGAN WAKTU: Ambil Waktu Lokal Server Saat Ini ---
+        current_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
         system_instruction = (
             "You are a strict data extraction AI. Your ONLY job is to convert raw webpage text "
             "into a flawless, minified JSON object without any conversational text or markdown wrappers."
         )
-
-        today_str = datetime.today().strftime('%B %d, %Y')
 
         prompt = (
             "Carefully analyze the raw job posting text provided below and extract the information "
@@ -346,8 +299,11 @@ class HermesScraper:
             "- \"company_logo\": (string URL or null) Clean absolute URL of the company logo image. Return null if not found.\n"
             "- \"location\": (string) Specific city or region (e.g., 'Jakarta', 'Bandung'). Default to 'Indonesia' if generic or not specified.\n"
             
-            f"- \"posted_at\": (string or null) The estimated post date in YYYY-MM-DD format based on today's date ({today_str}). "
-            "If the text says relative time like '3 days ago', calculate it. Return null if completely unknown.\n"
+            f"- \"posted_at\": (string or null) The estimated post date in YYYY-MM-DD format. "
+            f"CRITICAL: Today's exact local time is ({current_now}). "
+            f"If the webpage text indicates relative time like '2 hours ago', '2 jam yang lalu', '10 minutes ago', or 'baru saja', "
+            f"deduct it accurately from the current local time provided above. Do NOT roll back to yesterday's date if the subtraction "
+            f"does not cross midnight (00:00:00) of the current local time. Return null if completely unknown.\n"
             
             "- \"requirements\": (array of strings) A clean list of qualifications, skills, or job descriptions. "
             "Break down long paragraphs into short, distinct array elements. Do not leave this array empty; if no specific "
@@ -468,15 +424,8 @@ class HermesScraper:
             if pushed: 
                 successful_pushes += 1
                 self._mark_url_processed(norm_url)
+                
+            # Tambahkan jeda napas kecil antar pemrosesan halaman detail
+            time.sleep(random.uniform(1.5, 3.5))
 
         return successful_pushes
-
-# Contoh Cara Menjalankan Semua Platform Sekaligus secara Berurutan:
-if __name__ == "__main__":
-    with HermesScraper() as scraper:
-        for platform in PLATFORM_CONFIGS.keys():
-            try:
-                pushed_count = scraper.scrape_platform(platform, max_jobs=3)
-                logger.info(f"Successfully processed {pushed_count} jobs from {platform}")
-            except Exception as e:
-                logger.error(f"Fatal error scraping platform {platform}: {str(e)}")
