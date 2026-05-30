@@ -26,6 +26,11 @@ PLATFORM_CONFIGS = {
         'fallback_query': "site:linkedin.com/jobs/view/ \"Indonesia\" \"loker\"",
         'use_browser': True
     },
+    'JobStreet': {
+        'search_url': "https://id.jobstreet.com/id/jobs?daterange=7",
+        'fallback_query': "site:id.jobstreet.com/id/job/ \"loker terbaru\"",
+        'use_browser': True
+    },
     'Karirhub Kemnaker': {
         'search_url': "https://karirhub.kemnaker.go.id/",
         'fallback_query': "site:karirhub.kemnaker.go.id/lowongan/",
@@ -40,48 +45,52 @@ class HermesScraper:
             headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             },
-            timeout=30.0
+            timeout=25.0
         )
+        
+        # --- FIX KONSISTENSI FOLDER EASYPANEL ---
+        if not os.path.exists(settings.DATA_DIR):
+            os.makedirs(settings.DATA_DIR, exist_ok=True)
+            logger.info(f"Created persistent data directory at: {settings.DATA_DIR}")
+
         self.visited_file = os.path.join(settings.DATA_DIR, "scraped_jobs.txt")
         self.visited_urls = set()
         self._load_visited_urls()
 
     def _normalize_url(self, url: str) -> str:
         try:
+            url = url.strip()
             parsed = urllib.parse.urlparse(url)
             netloc = parsed.netloc.lower()
             path_lower = parsed.path.lower()
             
-            # --- FIX DUPLIKAT LINKEDIN ---
+            # --- FIX SUPER DUPLIKAT LINKEDIN ---
             if 'linkedin.com' in netloc:
                 qs = urllib.parse.parse_qs(parsed.query)
                 if 'currentJobId' in qs:
                     return f"https://www.linkedin.com/jobs/view/{qs['currentJobId'][0]}"
                 
-                # Ekstrak ID numerik (8-12 digit) dari path lowongan
-                match_id = re.search(r'/jobs/view/.*?(\d{8,12})', path_lower)
+                match_id = re.search(r'(\d{8,12})', path_lower)
                 if match_id:
                     return f"https://www.linkedin.com/jobs/view/{match_id.group(1)}"
-                
                 return f"https://www.linkedin.com{parsed.path.rstrip('/')}"
                 
-            # --- FIX DUPLIKAT JOBSTREET ---
+            # --- FIX SUPER DUPLIKAT JOBSTREET (SEEK ERA) ---
             elif 'jobstreet' in netloc:
-                match = re.search(r'/job/(?:.*?-)?(\d+)', path_lower)
-                if match:
-                    return f"https://www.jobstreet.co.id/id/job/{match.group(1)}"
-                return f"https://www.jobstreet.co.id{parsed.path.rstrip('/')}"
+                match_id = re.search(r'/job/(\d+)', path_lower)
+                if match_id:
+                    return f"https://id.jobstreet.com/job/{match_id.group(1)}"
+                return f"https://id.jobstreet.com{parsed.path.rstrip('/')}"
                 
-            # --- FIX DUPLIKAT INDEED ---
+            # --- FIX SUPER DUPLIKAT INDEED ---
             elif 'indeed.com' in netloc:
                 qs = urllib.parse.parse_qs(parsed.query)
                 if 'jk' in qs:
                     return f"https://id.indeed.com/viewjob?jk={qs['jk'][0]}"
                 return f"https://id.indeed.com{parsed.path.rstrip('/')}"
 
-            # --- FIX DUPLIKAT KARIRHUB KEMNAKER ---
+            # --- FIX SUPER DUPLIKAT KARIRHUB KEMNAKER ---
             elif 'karirhub' in netloc:
-                # Tangkap ID lowongan berupa alphanumeric/angka di dalam path /lowongan/ID
                 match = re.search(r'/lowongan/([a-zA-Z0-9-]+)', path_lower)
                 if match:
                     return f"https://karirhub.kemnaker.go.id/lowongan/{match.group(1)}"
@@ -116,28 +125,28 @@ class HermesScraper:
                 logger.error(f"Error in standard fetch for {url}: {str(e)}")
 
         logger.info(f"Using advanced browser automation to load: {url}")
+        # --- MEMORY EFFICIENCY: Pembersihan instance Chromium secara paksa ---
         try:
             with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
-                context = browser.new_context(
-                    ignore_https_errors=True,
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                    viewport={"width": 1366, "height": 768}
-                )
-                page = context.new_page()
-                if stealth_sync:
-                    stealth_sync(page)
-                    
-                page.goto(url, wait_until="domcontentloaded", timeout=45000)
-                
-                # --- FIX ANTI-BANNED: Jeda Acak Manusiawi ---
-                page.wait_for_timeout(random.randint(3000, 6000))
-                page.evaluate(f"window.scrollBy(0, {random.randint(350, 500)})")
-                page.wait_for_timeout(random.randint(2000, 4000))
-                
-                content = page.content()
-                browser.close()
-                return content
+                with p.chromium.launch(headless=True) as browser:
+                    with browser.new_context(
+                        ignore_https_errors=True,
+                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                        viewport={"width": 1280, "height": 720}
+                    ) as context:
+                        page = context.new_page()
+                        if stealth_sync:
+                            stealth_sync(page)
+                            
+                        page.goto(url, wait_until="domcontentloaded", timeout=40000)
+                        
+                        page.wait_for_timeout(random.randint(2500, 5000))
+                        page.evaluate(f"window.scrollBy(0, {random.randint(350, 450)})")
+                        page.wait_for_timeout(random.randint(1500, 3000))
+                        
+                        content = page.content()
+                        page.close()
+                        return content
         except Exception as e:
             logger.error(f"Playwright automation failed for {url}: {str(e)}")
             return ""
@@ -176,8 +185,6 @@ class HermesScraper:
     def _parse_ai_response(self, response_json: dict) -> str:
         try:
             if settings.AI_PROVIDER.lower() == "openrouter":
-                actual_model = response_json.get('model', 'unknown')
-                logger.info(f"OpenRouter actual model used for this request: {actual_model}")
                 return response_json['choices'][0]['message']['content']
             else:
                 return response_json['candidates'][0]['content']['parts'][0]['text']
@@ -196,34 +203,34 @@ class HermesScraper:
         links = []
         raw_urls_for_regex = []
 
+        # --- TOKEN EFFICIENCY: Saring link sampah sebelum lempar ke AI ---
         for a in soup.find_all('a', href=True):
             href = a['href']
-            text = a.get_text(strip=True)
-            if len(href) > 10:
-                links.append({"text": text[:50], "url": href})
+            text = a.get_text(strip=True)[:30]
+            if len(href) > 15 and not any(x in href.lower() for x in ['javascript:', 'help', 'privacy', 'terms', 'cookie', 'settings']):
+                links.append({"text": text, "url": href})
                 raw_urls_for_regex.append(href)
 
         if not links:
-            logger.warning(f"No raw links found in HTML for {platform_name}. Possibly blocked by Cloudflare or CAPTCHA.")
+            logger.warning(f"No raw links found in HTML for {platform_name}.")
             return []
         if not settings.GEMINI_API_KEY:
             return []
 
-        logger.info(f"Found {len(links)} raw links on {platform_name}. Sending to AI for filtering...")
+        logger.info(f"Found {len(links)} cleaned links on {platform_name}. Querying AI filtering...")
         
-        system_instruction = "You are an expert web scraper assistant. You must output a JSON array of strings."
+        system_instruction = "You are a JSON parser. Output a clean JSON array of strings containing valid job post URLs."
         prompt = (
-            f"Analyze this list of links crawled from {platform_name}.\n"
-            f"Filter and return ONLY valid, direct job detail page URLs.\n"
-            f"Links data:\n{json.dumps(links[:120])}\n\n"
-            f"Return a clean JSON array of strings containing ONLY the URLs. No markdown wrapper like ```json."
+            f"Filter the list from {platform_name} and return ONLY direct job detail page URLs.\n"
+            f"Data:\n{json.dumps(links[:80])}\n\n"
+            f"Return clean JSON array of strings only."
         )
 
         url, headers, payload = self._prepare_ai_request(system_instruction, prompt)
 
         for attempt in range(3):
             try:
-                response = self.client.post(url, json=payload, headers=headers, timeout=30.0)
+                response = self.client.post(url, json=payload, headers=headers, timeout=25.0)
                 if response.status_code == 200:
                     res_text = self._parse_ai_response(response.json()).strip()
                     res_text = re.sub(r'```json\s*|\s*```', '', res_text)
@@ -232,33 +239,33 @@ class HermesScraper:
                     last_bracket = res_text.rfind(']')
                     if first_bracket != -1 and last_bracket != -1:
                         res_text = res_text[first_bracket:last_bracket+1]
+                    
                     ai_urls = json.loads(res_text)
                     cleaned_urls = []
                     platform_key = platform_name.lower()
                     for u in ai_urls:
                         if u.startswith('/'):
                             if 'jobstreet' in platform_key:
-                                u = "[https://id.jobstreet.com](https://id.jobstreet.com)" + u
+                                u = "https://id.jobstreet.com" + u
                             elif 'karirhub' in platform_key:
-                                u = "[https://karirhub.kemnaker.go.id](https://karirhub.kemnaker.go.id)" + u
+                                u = "https://karirhub.kemnaker.go.id" + u
                         cleaned_urls.append(u)
                     return cleaned_urls
                 elif response.status_code in [429, 503]:
                     sleep_time = 5 * (2 ** attempt) 
-                    logger.warning(f"OpenRouter 429 (Rate Limit) untuk model {settings.GEMINI_MODEL}. Mencoba kembali dalam {sleep_time} detik...")
                     time.sleep(sleep_time)
             except Exception as e:
-                logger.error(f"AI Link extraction attempt {attempt+1} failed: {str(e)}")
-                time.sleep(2)
+                logger.error(f"AI Link extraction failed: {str(e)}")
+                time.sleep(1.5)
 
-        logger.warning(f"AI Engine completely unavailable. Activating Regex Emergency Backup...")
+        logger.warning(f"AI Engine timed out. Falling back to Regex Dynamic Engine...")
         platform_key = 'LinkedIn' if 'linkedin' in platform_name.lower() else ('JobStreet' if 'jobstreet' in platform_name.lower() else 'Indeed')
         fallback_regex = regex_fallbacks.get(platform_key)
         
         if fallback_regex:
             matched_urls = []
             for url_str in raw_urls_for_regex:
-                if "[google.com/url](https://google.com/url)" in url_str or "/url?" in url_str:
+                if "google.com/url" in url_str or "/url?" in url_str:
                     match_clean = re.search(r'url=(https?://[^&]+)', url_str)
                     if match_clean:
                         url_str = urllib.parse.unquote(match_clean.group(1))
@@ -266,7 +273,7 @@ class HermesScraper:
                 if re.search(fallback_regex, url_str):
                     if url_str.startswith('/'):
                         if 'jobstreet' in platform_key.lower():
-                            url_str = "[https://id.jobstreet.com](https://id.jobstreet.com)" + url_str
+                            url_str = "https://id.jobstreet.com" + url_str
                     matched_urls.append(url_str)
             return list(set(matched_urls))
             
@@ -274,7 +281,7 @@ class HermesScraper:
 
     def self_healing_google_search(self, platform_name: str, query: str) -> str:
         encoded_query = urllib.parse.quote(query)
-        google_url = f"[https://www.google.com/search?q=](https://www.google.com/search?q=){encoded_query}"
+        google_url = f"https://www.google.com/search?q={encoded_query}"
         logger.info(f"== [Self-Healing Active] == Triggering Google Search alternative for {platform_name}")
         return self.fetch_page_content(google_url, use_browser=True)
 
@@ -282,38 +289,27 @@ class HermesScraper:
         if not settings.GEMINI_API_KEY:
             return self._mock_fallback(raw_text, "API Key Missing")
 
-        # --- FIX KETERANGAN WAKTU: Ambil Waktu Lokal Server Saat Ini ---
+        # --- FIX KETERANGAN WAKTU: Waktu Lokal Akurat ---
         current_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         system_instruction = (
-            "You are a strict data extraction AI. Your ONLY job is to convert raw webpage text "
-            "into a flawless, minified JSON object without any conversational text or markdown wrappers."
+            "You are a strict data extraction AI. Convert webpage text into a minified JSON object without markdown formatting."
         )
 
+        # --- TOKEN EFFICIENCY: Batasi teks deskripsi lowongan maksimal 2500 karakter saja ---
         prompt = (
-            "Carefully analyze the raw job posting text provided below and extract the information "
-            "into a valid JSON object with EXACTLY these keys and strict formatting rules:\n\n"
+            "Extract job data into a valid JSON object with EXACTLY these keys:\n"
+            "\"job_title\" (string), \"company_name\" (string/null), \"company_logo\" (string URL/null), \"location\" (string), "
+            "\"posted_at\" (string YYYY-MM-DD or null), \"requirements\" (array of strings).\n\n"
             
-            "- \"job_title\": (string) The exact title of the job position.\n"
-            "- \"company_name\": (string or null) The official company name. Return null if not found.\n"
-            "- \"company_logo\": (string URL or null) Clean absolute URL of the company logo image. Return null if not found.\n"
-            "- \"location\": (string) Specific city or region (e.g., 'Jakarta', 'Bandung'). Default to 'Indonesia' if generic or not specified.\n"
+            f"CRITICAL: Current local time is ({current_now}). "
+            "If text indicates relative times like '2 hours ago', '2 jam yang lalu', '10 mins ago', or 'baru saja', "
+            "deduct it accurately from current local time. Do NOT roll back to yesterday if it does not cross midnight.\n\n"
             
-            f"- \"posted_at\": (string or null) The estimated post date in YYYY-MM-DD format. "
-            f"CRITICAL: Today's exact local time is ({current_now}). "
-            f"If the webpage text indicates relative time like '2 hours ago', '2 jam yang lalu', '10 minutes ago', or 'baru saja', "
-            f"deduct it accurately from the current local time provided above. Do NOT roll back to yesterday's date if the subtraction "
-            f"does not cross midnight (00:00:00) of the current local time. Return null if completely unknown.\n"
-            
-            "- \"requirements\": (array of strings) A clean list of qualifications, skills, or job descriptions. "
-            "Break down long paragraphs into short, distinct array elements. Do not leave this array empty; if no specific "
-            "requirements are found, summarize the job responsibilities into 2-3 points.\n\n"
-            
-            "CRITICAL RULES:\n"
-            "1. Do NOT wrap the output in ```json ... ``` markdown blocks.\n"
-            "2. Ensure all quotes inside string values are properly escaped (\\\") to prevent invalid JSON.\n"
-            "3. Respond ONLY with the raw JSON object string starting with { and ending with }.\n\n"
-            f"Raw Text:\n{raw_text[:4000]}"
+            "RULES:\n"
+            "1. No ```json markdown wrappers.\n"
+            "2. Escape inner quotes properly.\n\n"
+            f"Raw Text:\n{raw_text[:2500]}"
         )
 
         url, headers, payload = self._prepare_ai_request(system_instruction, prompt)
@@ -332,10 +328,8 @@ class HermesScraper:
                 content_str = re.sub(r'\n\s*', ' ', content_str) 
                 return json.loads(content_str)
             else:
-                logger.error(f"AI API returned error status {response.status_code}")
-                return self._mock_fallback(raw_text, f"HTTP Error {response.status_code}")
+                return self._mock_fallback(raw_text, f"HTTP {response.status_code}")
         except Exception as e:
-            logger.error(f"Exception during AI parsing: {str(e)}")
             return self._mock_fallback(raw_text, str(e))
 
     def _mock_fallback(self, raw_text: str, reason: str) -> dict:
@@ -385,35 +379,49 @@ class HermesScraper:
         logger.info(f"=== Starting scrape cycle for platform: {platform_name} ===")
         html = self.fetch_page_content(config['search_url'], use_browser=config['use_browser'])
         
-        job_urls = []
+        raw_job_urls = []
         if html:
-            job_urls = self.extract_job_urls_with_ai(html, platform_name)
+            raw_job_urls = self.extract_job_urls_with_ai(html, platform_name)
 
-        if not job_urls:
+        if not raw_job_urls:
             logger.warning(f"Main route for {platform_name} returned 0 results. Triggering self-healing...")
             fallback_html = self.self_healing_google_search(platform_name, config['fallback_query'])
             if fallback_html:
-                job_urls = self.extract_job_urls_with_ai(fallback_html, f"Google Search for {platform_name}")
+                raw_job_urls = self.extract_job_urls_with_ai(fallback_html, f"Google Search for {platform_name}")
 
-        logger.info(f"Total functional job URLs discovered: {len(job_urls)}")
+        logger.info(f"Total raw URLs discovered by AI/Fallback: {len(raw_job_urls)}")
         
-        target_urls = job_urls[:max_jobs]
+        # --- FIX KEBOCORAN DUPLIKAT: Saring total sebelum memotong kuota max_jobs ---
+        valid_target_urls = []
+        for url in raw_job_urls:
+            if "google.com" in url: 
+                continue
+                
+            norm_url = self._normalize_url(url)
+            
+            if norm_url in self.visited_urls:
+                logger.info(f"⏭️ [Skip Awal] URL sudah pernah di-scrape sebelumnya: {norm_url}")
+                continue
+                
+            if norm_url not in valid_target_urls:
+                valid_target_urls.append(norm_url)
+                
+            if len(valid_target_urls) >= max_jobs:
+                break
+
+        logger.info(f"Total fresh & unique URLs ready to process: {len(valid_target_urls)}")
         successful_pushes = 0
 
-        for index, url in enumerate(target_urls):
-            logger.info(f"Processing job [{index+1}/{len(target_urls)}]: {url}")
-            if "google.com" in url: continue
-            
-            norm_url = self._normalize_url(url)
-            if norm_url in self.visited_urls:
-                logger.info(f"⏭️ Skipping already processed job: {norm_url}")
+        for index, norm_url in enumerate(valid_target_urls):
+            logger.info(f"Processing job [{index+1}/{len(valid_target_urls)}]: {norm_url}")
+
+            detail_html = self.fetch_page_content(norm_url, use_browser=config['use_browser'])
+            if not detail_html: 
                 continue
 
-            detail_html = self.fetch_page_content(url, use_browser=config['use_browser'])
-            if not detail_html: continue
-
             soup = BeautifulSoup(detail_html, 'html.parser')
-            for element in soup(["script", "style", "nav", "header", "footer", "form"]):
+            # --- MEMORY & TOKEN EFFICIENCY: Decompose kontainer sampah ekstrim ---
+            for element in soup(["script", "style", "nav", "header", "footer", "form", "aside", "iframe"]):
                 element.decompose()
             
             plain_text = soup.get_text(separator="\n")
@@ -425,7 +433,6 @@ class HermesScraper:
                 successful_pushes += 1
                 self._mark_url_processed(norm_url)
                 
-            # Tambahkan jeda napas kecil antar pemrosesan halaman detail
-            time.sleep(random.uniform(1.5, 3.5))
+            time.sleep(random.uniform(2.0, 4.5))
 
         return successful_pushes
