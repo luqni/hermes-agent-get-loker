@@ -46,6 +46,11 @@ PLATFORM_CONFIGS = {
         'search_url': "https://karirhub.kemnaker.go.id/",
         'fallback_query': "site:karirhub.kemnaker.go.id/lowongan/",
         'use_browser': True
+    },
+    'KitaLulus': {
+        'search_url': "https://www.kitalulus.com/lowongan-kerja",
+        'fallback_query': "site:kitalulus.com/lowongan-kerja/ \"Jakarta\"",
+        'use_browser': True
     }
 }
 
@@ -91,6 +96,9 @@ class HermesScraper:
             match = re.search(r'/lowongan/(\d+)', parsed.path)
             if match:
                 return f"https://karirhub.kemnaker.go.id/lowongan/{match.group(1)}"
+
+        elif 'kitalulus' in netloc:
+            return f"https://www.kitalulus.com{parsed.path}"
 
         return f"{parsed.scheme}://{netloc}{parsed.path}"
 
@@ -196,7 +204,8 @@ class HermesScraper:
         regex_fallbacks = {
             'LinkedIn': r'linkedin\.com/jobs/view/[0-9]+',
             'JobStreet': r'(?:jobstreet\.(?:com|co\.id))?/[^"\'\s<>]+?/job/[0-9]+',
-            'Indeed': r'(?:indeed\.com)?/(?:rc/clk|viewjob)\?[^"\'\s<>]+'
+            'Indeed': r'(?:indeed\.com)?/(?:rc/clk|viewjob)\?[^"\'\s<>]+',
+            'KitaLulus': r'kitalulus\.com/lowongan-kerja/[^"\'\s<>]+'
         }
 
         soup = BeautifulSoup(html_content, 'html.parser')
@@ -257,6 +266,8 @@ class HermesScraper:
                             #     u = "https://www.loker.id" + u
                             elif 'karirhub' in platform_key:
                                 u = "https://karirhub.kemnaker.go.id" + u
+                            elif 'kitalulus' in platform_key:
+                                u = "https://www.kitalulus.com" + u
                         cleaned_urls.append(u)
                     return cleaned_urls
                 elif response.status_code in [429, 503]:
@@ -271,7 +282,17 @@ class HermesScraper:
 
         # EMERGENCY FALLBACK REGEX
         logger.warning(f"AI Engine completely unavailable. Activating Regex Emergency Backup...")
-        platform_key = 'LinkedIn' if 'linkedin' in platform_name.lower() else ('JobStreet' if 'jobstreet' in platform_name.lower() else 'Indeed')
+        if 'linkedin' in platform_name.lower():
+            platform_key = 'LinkedIn'
+        elif 'jobstreet' in platform_name.lower():
+            platform_key = 'JobStreet'
+        elif 'indeed' in platform_name.lower():
+            platform_key = 'Indeed'
+        elif 'kitalulus' in platform_name.lower():
+            platform_key = 'KitaLulus'
+        else:
+            platform_key = 'LinkedIn'
+            
         fallback_regex = regex_fallbacks.get(platform_key)
         
         if fallback_regex:
@@ -289,6 +310,8 @@ class HermesScraper:
                             url_str = "https://id.jobstreet.com" + url_str
                         elif 'indeed' in platform_key.lower():
                             url_str = "https://id.indeed.com" + url_str
+                        elif 'kitalulus' in platform_key.lower():
+                            url_str = "https://www.kitalulus.com" + url_str
                     matched_urls.append(url_str)
             return list(set(matched_urls))
             
@@ -396,6 +419,8 @@ class HermesScraper:
         }
         try:
             response = self.client.post(webhook_url, json=payload, headers=headers)
+            if response.status_code not in [200, 201]:
+                logger.error(f"Laravel webhook failed: {response.status_code} - {response.text}")
             return response.status_code in [200, 201]
         except Exception as e:
             logger.error(f"Error pushing job to Laravel: {str(e)}")
@@ -411,6 +436,12 @@ class HermesScraper:
         job_urls = []
         if html:
             job_urls = self.extract_job_urls_with_ai(html, platform_name)
+
+        if not job_urls and platform_name == 'KitaLulus':
+            logger.info("Attempting KitaLulus direct URL fallback to /lowongan...")
+            html = self.fetch_page_content("https://www.kitalulus.com/lowongan", use_browser=config['use_browser'])
+            if html:
+                job_urls = self.extract_job_urls_with_ai(html, platform_name)
 
         if not job_urls:
             logger.warning(f"Main route for {platform_name} returned 0 results. Triggering self-healing...")
