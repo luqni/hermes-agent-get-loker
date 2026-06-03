@@ -204,7 +204,8 @@ class HermesScraper:
             'LinkedIn': r'linkedin\.com/jobs/view/[0-9]+',
             'JobStreet': r'(?:jobstreet\.(?:com|co\.id))?/[^"\'\s<>]+?/job/[0-9]+',
             'Indeed': r'(?:indeed\.com)?/(?:rc/clk|viewjob)\?[^"\'\s<>]+',
-            'KitaLulus': r'kitalulus\.com/lowongan-kerja/[^"\'\s<>]+'
+            'KitaLulus': r'kitalulus\.com/lowongan-kerja/[^"\'\s<>]+',
+            'Karirhub Kemnaker': r'(?:karirhub\.kemnaker\.go\.id)?/lowongan/[^"\'\s<>]+'
         }
 
         soup = BeautifulSoup(html_content, 'html.parser')
@@ -259,6 +260,10 @@ class HermesScraper:
                                 u = "https://karirhub.kemnaker.go.id" + u
                             elif 'kitalulus' in platform_key:
                                 u = "https://www.kitalulus.com" + u
+                            elif 'linkedin' in platform_key:
+                                u = "https://www.linkedin.com" + u
+                            elif 'indeed' in platform_key:
+                                u = "https://id.indeed.com" + u
                         cleaned_urls.append(u)
                     return cleaned_urls
                 elif response.status_code in [429, 503]:
@@ -278,6 +283,8 @@ class HermesScraper:
             platform_key = 'Indeed'
         elif 'kitalulus' in platform_name.lower():
             platform_key = 'KitaLulus'
+        elif 'karirhub' in platform_name.lower() or 'kemnaker' in platform_name.lower():
+            platform_key = 'Karirhub Kemnaker'
         else:
             platform_key = 'LinkedIn'
             
@@ -299,6 +306,10 @@ class HermesScraper:
                             url_str = "https://id.indeed.com" + url_str
                         elif 'kitalulus' in platform_key.lower():
                             url_str = "https://www.kitalulus.com" + url_str
+                        elif 'linkedin' in platform_key.lower():
+                            url_str = "https://www.linkedin.com" + url_str
+                        elif 'karirhub' in platform_key.lower():
+                            url_str = "https://karirhub.kemnaker.go.id" + url_str
                     matched_urls.append(url_str)
             return list(set(matched_urls))
             
@@ -410,13 +421,13 @@ class HermesScraper:
         if html:
             raw_job_urls = self.extract_job_urls_with_ai(html, platform_name)
 
-        if not job_urls and platform_name == 'KitaLulus':
+        if not raw_job_urls and platform_name == 'KitaLulus':
             logger.info("Attempting KitaLulus direct URL fallback to /lowongan...")
             html = self.fetch_page_content("https://www.kitalulus.com/lowongan", use_browser=config['use_browser'])
             if html:
-                job_urls = self.extract_job_urls_with_ai(html, platform_name)
+                raw_job_urls = self.extract_job_urls_with_ai(html, platform_name)
 
-        if not job_urls:
+        if not raw_job_urls:
             logger.warning(f"Main route for {platform_name} returned 0 results. Triggering self-healing...")
             fallback_html = self.self_healing_google_search(platform_name, config['fallback_query'])
             if fallback_html:
