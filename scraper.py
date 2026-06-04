@@ -108,6 +108,29 @@ class HermesScraper:
             logger.error(f"Error normalizing URL {url}: {str(e)}")
             return url
 
+    def _is_valid_job_url(self, url: str, platform_name: str) -> bool:
+        url_lower = url.lower()
+        
+        # General filter for homepages/landing pages (no trailing paths or only very short ones)
+        parsed = urllib.parse.urlparse(url)
+        path = parsed.path.strip("/")
+        if not path or len(path) < 4:
+            return False
+            
+        # Specific patterns per platform
+        if "linkedin" in platform_name.lower():
+            return "/jobs/view/" in url_lower
+        elif "jobstreet" in platform_name.lower():
+            return "/job/" in url_lower
+        elif "indeed" in platform_name.lower():
+            return "/viewjob" in url_lower or "/rc/clk" in url_lower
+        elif "kitalulus" in platform_name.lower():
+            return "/lowongan-kerja/" in url_lower
+        elif "karirhub" in platform_name.lower() or "kemnaker" in platform_name.lower():
+            return "/lowongan/" in url_lower
+            
+        return True
+
     def _load_visited_urls(self):
         if os.path.exists(self.visited_file):
             with open(self.visited_file, "r", encoding="utf-8") as f:
@@ -336,7 +359,15 @@ class HermesScraper:
         prompt = (
             "Extract job data into a valid JSON object with EXACTLY these keys:\n"
             "\"job_title\" (string), \"company_name\" (string/null), \"company_logo\" (string URL/null), \"location\" (string), "
-            "\"posted_at\" (string YYYY-MM-DD or null), \"requirements\" (array of strings).\n\n"
+            "\"posted_at\" (string YYYY-MM-DD or null), \"requirements\" (array of strings), "
+            "\"min_age\" (integer/null), \"max_age\" (integer/null), \"province\" (string/null).\n\n"
+            
+            "ADDITIONAL INSTRUCTIONS FOR NEW FIELDS:\n"
+            "- \"min_age\": Extract the minimum age requirement if specified in the text (e.g. 20). Otherwise null.\n"
+            "- \"max_age\": Extract the maximum age requirement if specified in the text (e.g. 35). Otherwise null.\n"
+            "- \"province\": Identify/infer the Indonesian province for the job's location/city. For example, if location is "
+            "'Bandung', province should be 'Jawa Barat'. If location is 'Jakarta Selatan' or 'Jakarta', province should be 'DKI Jakarta'. "
+            "If it cannot be mapped or is remote/work from home/outside Indonesia, set as null.\n\n"
             
             f"CRITICAL: Current local time is ({current_now}). "
             "If text indicates relative times like '2 hours ago', '2 jam yang lalu', '10 mins ago', or 'baru saja', "
@@ -378,7 +409,10 @@ class HermesScraper:
             "company_logo": None,
             "requirements": ["Kendala ekstraksi AI.", f"Alasan: {reason}"],
             "location": "Indonesia",
-            "posted_at": None
+            "posted_at": None,
+            "min_age": None,
+            "max_age": None,
+            "province": None
         }
 
     def push_to_laravel(self, platform_name: str, job_data: dict, source_url: str) -> bool:
@@ -399,7 +433,10 @@ class HermesScraper:
             "requirements": reqs,
             "source_url": source_url,
             "location": job_data.get("location") or "Indonesia",
-            "posted_at": job_data.get("posted_at")
+            "posted_at": job_data.get("posted_at"),
+            "min_age": job_data.get("min_age"),
+            "max_age": job_data.get("max_age"),
+            "province": job_data.get("province")
         }
         try:
             response = self.client.post(webhook_url, json=payload, headers=headers)
@@ -443,6 +480,11 @@ class HermesScraper:
                 
             norm_url = self._normalize_url(url)
             
+            # --- VALIDASI URL DETAIL LOWONGAN ---
+            if not self._is_valid_job_url(norm_url, platform_name):
+                logger.warning(f"⏭️ [Skip URL] URL bukan halaman detail lowongan valid: {norm_url}")
+                continue
+            
             if norm_url in self.visited_urls:
                 logger.info(f"⏭️ [Skip Awal] URL sudah pernah di-scrape sebelumnya: {norm_url}")
                 continue
@@ -472,6 +514,19 @@ class HermesScraper:
             cleaned_text = "\n".join([line.strip() for line in plain_text.split("\n") if line.strip()])
             
             job_details = self.extract_job_details_with_ai(cleaned_text)
+            
+            # --- VALIDASI HASIL EKSTRAKSI JUDUL LOWONGAN ---
+            job_title = job_details.get("job_title")
+            invalid_titles = {
+                "unknown job", "unknown", "unknown job title", "job title", "null", 
+                "job fair", "sign in", "login", "register", "cookie consent", "cookie",
+                "kementerian ketenagakerjaan ri", "kemnaker", "jobstreet", "linkedin", "indeed",
+                "hubungi kami", "contact us", "about us", "tentang kami", "privacy policy"
+            }
+            if not job_title or job_title.strip().lower() in invalid_titles:
+                logger.warning(f"⚠️ [Skip Detail] Judul lowongan tidak valid ('{job_title}') untuk URL: {norm_url}")
+                continue
+                
             pushed = self.push_to_laravel(platform_name, job_details, norm_url)
             if pushed: 
                 successful_pushes += 1
