@@ -40,6 +40,11 @@ PLATFORM_CONFIGS = {
         'search_url': "https://www.kitalulus.com/lowongan-kerja",
         'fallback_query': "site:kitalulus.com/lowongan-kerja/ \"Jakarta\"",
         'use_browser': True
+    },
+    'Loker.id': {
+        'search_url': "https://www.loker.id/cari-lowongan-kerja",
+        'fallback_query': "site:loker.id/ \"lowongan kerja terbaru\"",
+        'use_browser': True
     }
 }
 
@@ -102,6 +107,11 @@ class HermesScraper:
                 return f"https://karirhub.kemnaker.go.id{parsed.path.rstrip('/')}"
             elif 'kitalulus' in netloc:
                 return f"https://www.kitalulus.com{parsed.path}"
+            elif 'loker.id' in netloc:
+                qs = urllib.parse.parse_qs(parsed.query)
+                if 'jobid' in qs:
+                    return f"https://www.loker.id/cari-lowongan-kerja?jobid={qs['jobid'][0]}"
+                return f"https://www.loker.id{parsed.path.rstrip('/')}"
 
             return f"{parsed.scheme}://{netloc}{parsed.path.rstrip('/')}"
         except Exception as e:
@@ -126,6 +136,8 @@ class HermesScraper:
             return "/viewjob" in url_lower or "/rc/clk" in url_lower
         elif "kitalulus" in platform_name.lower():
             return "/lowongan-kerja/" in url_lower
+        elif "loker.id" in platform_name.lower():
+            return ".html" in url_lower or "jobid=" in url_lower
         elif "karirhub" in platform_name.lower() or "kemnaker" in platform_name.lower():
             return "/lowongan/" in url_lower
             
@@ -228,6 +240,7 @@ class HermesScraper:
             'JobStreet': r'(?:jobstreet\.(?:com|co\.id))?/[^"\'\s<>]+?/job/[0-9]+',
             'Indeed': r'(?:indeed\.com)?/(?:rc/clk|viewjob)\?[^"\'\s<>]+',
             'KitaLulus': r'kitalulus\.com/lowongan-kerja/[^"\'\s<>]+',
+            'Loker.id': r'loker\.id/[^"\'\s<>]+?\.html|loker\.id/cari-lowongan-kerja\?jobid=[0-9]+',
             'Karirhub Kemnaker': r'(?:karirhub\.kemnaker\.go\.id)?/lowongan/[^"\'\s<>]+'
         }
 
@@ -287,6 +300,8 @@ class HermesScraper:
                                 u = "https://www.linkedin.com" + u
                             elif 'indeed' in platform_key:
                                 u = "https://id.indeed.com" + u
+                            elif 'loker.id' in platform_key:
+                                u = "https://www.loker.id" + u
                         cleaned_urls.append(u)
                     return cleaned_urls
                 elif response.status_code in [429, 503]:
@@ -306,6 +321,8 @@ class HermesScraper:
             platform_key = 'Indeed'
         elif 'kitalulus' in platform_name.lower():
             platform_key = 'KitaLulus'
+        elif 'loker.id' in platform_name.lower():
+            platform_key = 'Loker.id'
         elif 'karirhub' in platform_name.lower() or 'kemnaker' in platform_name.lower():
             platform_key = 'Karirhub Kemnaker'
         else:
@@ -333,6 +350,8 @@ class HermesScraper:
                             url_str = "https://www.linkedin.com" + url_str
                         elif 'karirhub' in platform_key.lower():
                             url_str = "https://karirhub.kemnaker.go.id" + url_str
+                        elif 'loker.id' in platform_key.lower():
+                            url_str = "https://www.loker.id" + url_str
                     matched_urls.append(url_str)
             return list(set(matched_urls))
             
@@ -360,14 +379,17 @@ class HermesScraper:
             "Extract job data into a valid JSON object with EXACTLY these keys:\n"
             "\"job_title\" (string), \"company_name\" (string/null), \"company_logo\" (string URL/null), \"location\" (string), "
             "\"posted_at\" (string YYYY-MM-DD or null), \"requirements\" (array of strings), "
-            "\"min_age\" (integer/null), \"max_age\" (integer/null), \"province\" (string/null).\n\n"
+            "\"min_age\" (integer/null), \"max_age\" (integer/null), \"province\" (string/null), "
+            "\"min_salary\" (integer/null), \"max_salary\" (integer/null).\n\n"
             
             "ADDITIONAL INSTRUCTIONS FOR NEW FIELDS:\n"
             "- \"min_age\": Extract the minimum age requirement if specified in the text (e.g. 20). Otherwise null.\n"
             "- \"max_age\": Extract the maximum age requirement if specified in the text (e.g. 35). Otherwise null.\n"
             "- \"province\": Identify/infer the Indonesian province for the job's location/city. For example, if location is "
             "'Bandung', province should be 'Jawa Barat'. If location is 'Jakarta Selatan' or 'Jakarta', province should be 'DKI Jakarta'. "
-            "If it cannot be mapped or is remote/work from home/outside Indonesia, set as null.\n\n"
+            "If it cannot be mapped or is remote/work from home/outside Indonesia, set as null.\n"
+            "- \"min_salary\": Extract the minimum monthly salary in Rupiah (IDR) if specified (e.g., if salary is 'Rp 3 - 4.5 Juta', set as 3000000). Otherwise null.\n"
+            "- \"max_salary\": Extract the maximum monthly salary in Rupiah (IDR) if specified (e.g., if salary is 'Rp 3 - 4.5 Juta', set as 4500000; if 's.d. Rp 5.000.000', set as 5000000). Otherwise null.\n\n"
             
             f"CRITICAL: Current local time is ({current_now}). "
             "If text indicates relative times like '2 hours ago', '2 jam yang lalu', '10 mins ago', or 'baru saja', "
@@ -412,7 +434,9 @@ class HermesScraper:
             "posted_at": None,
             "min_age": None,
             "max_age": None,
-            "province": None
+            "province": None,
+            "min_salary": None,
+            "max_salary": None
         }
 
     def push_to_laravel(self, platform_name: str, job_data: dict, source_url: str) -> bool:
@@ -436,7 +460,9 @@ class HermesScraper:
             "posted_at": job_data.get("posted_at"),
             "min_age": job_data.get("min_age"),
             "max_age": job_data.get("max_age"),
-            "province": job_data.get("province")
+            "province": job_data.get("province"),
+            "min_salary": job_data.get("min_salary"),
+            "max_salary": job_data.get("max_salary")
         }
         try:
             response = self.client.post(webhook_url, json=payload, headers=headers)
