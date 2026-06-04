@@ -67,6 +67,15 @@ class HermesScraper:
         self.visited_urls = set()
         self._load_visited_urls()
 
+    def _post(self, url: str, json_data: dict, headers: dict = None, timeout: float = 25.0) -> httpx.Response:
+        req_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        if headers:
+            req_headers.update(headers)
+        with httpx.Client(timeout=timeout) as client:
+            return client.post(url, json=json_data, headers=req_headers)
+
     def _normalize_url(self, url: str) -> str:
         try:
             url = url.strip()
@@ -135,7 +144,7 @@ class HermesScraper:
         elif "indeed" in platform_name.lower():
             return "/viewjob" in url_lower or "/rc/clk" in url_lower
         elif "kitalulus" in platform_name.lower():
-            return "/lowongan-kerja/" in url_lower
+            return "/lowongan-kerja/" in url_lower or "/lowongan/detail/" in url_lower
         elif "loker.id" in platform_name.lower():
             return ".html" in url_lower or "jobid=" in url_lower
         elif "karirhub" in platform_name.lower() or "kemnaker" in platform_name.lower():
@@ -239,7 +248,7 @@ class HermesScraper:
             'LinkedIn': r'linkedin\.com/jobs/view/[0-9]+',
             'JobStreet': r'(?:jobstreet\.(?:com|co\.id))?/[^"\'\s<>]+?/job/[0-9]+',
             'Indeed': r'(?:indeed\.com)?/(?:rc/clk|viewjob)\?[^"\'\s<>]+',
-            'KitaLulus': r'kitalulus\.com/lowongan-kerja/[^"\'\s<>]+',
+            'KitaLulus': r'kitalulus\.com/lowongan-kerja/[^"\'\s<>]+|kitalulus\.com/lowongan/detail/[^"\'\s<>]+',
             'Loker.id': r'loker\.id/[^"\'\s<>]+?\.html|loker\.id/cari-lowongan-kerja\?jobid=[0-9]+',
             'Karirhub Kemnaker': r'(?:karirhub\.kemnaker\.go\.id)?/lowongan/[^"\'\s<>]+'
         }
@@ -275,7 +284,7 @@ class HermesScraper:
 
         for attempt in range(3):
             try:
-                response = self.client.post(url, json=payload, headers=headers, timeout=25.0)
+                response = self._post(url, json_data=payload, headers=headers, timeout=25.0)
                 if response.status_code == 200:
                     res_text = self._parse_ai_response(response.json()).strip()
                     res_text = re.sub(r'```json\s*|\s*```', '', res_text)
@@ -404,7 +413,7 @@ class HermesScraper:
         url, headers, payload = self._prepare_ai_request(system_instruction, prompt)
 
         try:
-            response = self.client.post(url, json=payload, headers=headers, timeout=20.0)
+            response = self._post(url, json_data=payload, headers=headers, timeout=20.0)
             if response.status_code == 200:
                 content = self._parse_ai_response(response.json()).strip()
                 content_str = re.sub(r'```json\s*|\s*```', '', content)
@@ -465,7 +474,7 @@ class HermesScraper:
             "max_salary": job_data.get("max_salary")
         }
         try:
-            response = self.client.post(webhook_url, json=payload, headers=headers)
+            response = self._post(webhook_url, json_data=payload, headers=headers, timeout=25.0)
             if response.status_code not in [200, 201]:
                 logger.error(f"Laravel webhook failed: {response.status_code} - {response.text}")
             return response.status_code in [200, 201]
