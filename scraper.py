@@ -51,12 +51,6 @@ PLATFORM_CONFIGS = {
 class HermesScraper:
     def __init__(self):
         logger.info(f"HermesScraper initialized. AI Provider: {settings.AI_PROVIDER}, Configured Model: {settings.GEMINI_MODEL}")
-        self.client = httpx.Client(
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            },
-            timeout=25.0
-        )
         
         # --- FIX KONSISTENSI FOLDER EASYPANEL ---
         if not os.path.exists(settings.DATA_DIR):
@@ -66,6 +60,15 @@ class HermesScraper:
         self.visited_file = os.path.join(settings.DATA_DIR, "scraped_jobs.txt")
         self.visited_urls = set()
         self._load_visited_urls()
+
+    def _get(self, url: str, headers: dict = None, timeout: float = 25.0) -> httpx.Response:
+        req_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        if headers:
+            req_headers.update(headers)
+        with httpx.Client(timeout=timeout) as client:
+            return client.get(url, headers=req_headers)
 
     def _post(self, url: str, json_data: dict, headers: dict = None, timeout: float = 25.0) -> httpx.Response:
         req_headers = {
@@ -169,7 +172,7 @@ class HermesScraper:
     def fetch_page_content(self, url: str, use_browser: bool = False) -> str:
         if not use_browser:
             try:
-                response = self.client.get(url)
+                response = self._get(url)
                 if response.status_code == 200:
                     return response.text
             except Exception as e:
