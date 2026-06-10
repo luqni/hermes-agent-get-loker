@@ -42,7 +42,7 @@ PLATFORM_CONFIGS = {
         'use_browser': True
     },
     'Loker.id': {
-        'search_url': "https://www.loker.id/",  # Diarahkan ke homepage utama untuk inisiasi awal
+        'search_url': "https://www.loker.id/",  
         'fallback_query': "site:loker.id/ \"lowongan kerja terbaru\"",
         'use_browser': True
     }
@@ -132,7 +132,6 @@ class HermesScraper:
 
     def _is_valid_job_url(self, url: str, platform_name: str) -> bool:
         url_lower = url.lower()
-        
         parsed = urllib.parse.urlparse(url)
         path = parsed.path.strip("/")
         if not path or len(path) < 4:
@@ -147,7 +146,6 @@ class HermesScraper:
         elif "kitalulus" in platform_name.lower():
             return "/lowongan-kerja/" in url_lower or "/lowongan/detail/" in url_lower
         elif "loker.id" in platform_name.lower():
-            # FIX: Longgarkan aturan Loker.id agar mendeteksi struktur URL dinamis/slug kota baru
             return "cari-lowongan-kerja" not in url_lower and "lokasi-pekerjaan" not in url_lower and len(path) > 10
         elif "karirhub" in platform_name.lower() or "kemnaker" in platform_name.lower():
             return "/lowongan/" in url_lower
@@ -191,7 +189,6 @@ class HermesScraper:
                             stealth_sync(page)
                             
                         page.goto(url, wait_until="domcontentloaded", timeout=40000)
-                        
                         page.wait_for_timeout(random.randint(2500, 5000))
                         page.evaluate(f"window.scrollBy(0, {random.randint(350, 450)})")
                         page.wait_for_timeout(random.randint(1500, 3000))
@@ -204,9 +201,6 @@ class HermesScraper:
             return ""
 
     def discover_loker_id_locations(self) -> list:
-        """
-        Otomatis memindai filter lokasi aktif yang terpampang di halaman utama Loker.id
-        """
         homepage_url = "https://www.loker.id"
         logger.info(f"🔍 [Discover] Membaca filter lokasi langsung dari {homepage_url}...")
         
@@ -272,7 +266,6 @@ class HermesScraper:
             return ""
 
     def extract_job_urls_with_ai(self, html_content: str, platform_name: str) -> list:
-        # FIX: Sederhanakan regex Loker.id agar lebih adaptif menangkap struktur dynamic path-nya
         regex_fallbacks = {
             'LinkedIn': r'linkedin\.com/jobs/view/[0-9]+',
             'JobStreet': r'(?:jobstreet\.(?:com|co\.id))?/[^"\'\s<>]+?/job/[0-9]+',
@@ -406,215 +399,4 @@ class HermesScraper:
 
         current_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        system_instruction = (
-            "You are a strict data extraction AI. Convert webpage text into a minified JSON object without markdown formatting."
-        )
-
-        prompt = (
-            "Extract job data into a valid JSON object with EXACTLY these keys:\n"
-            "\"job_title\" (string), \"company_name\" (string/null), \"company_logo\" (string URL/null), \"location\" (string), "
-            "\"posted_at\" (string YYYY-MM-DD or null), \"requirements\" (array of strings), "
-            "\"min_age\" (integer/null), \"max_age\" (integer/null), \"province\" (string/null), "
-            "\"min_salary\" (integer/null), \"max_salary\" (integer/null).\n\n"
-            
-            "ADDITIONAL INSTRUCTIONS FOR NEW FIELDS:\n"
-            "- \"min_age\": Extract the minimum age requirement if specified in the text (e.g. 20). Otherwise null.\n"
-            "- \"max_age\": Extract the maximum age requirement if specified in the text (e.g. 35). Otherwise null.\n"
-            "- \"province\": Identify/infer the Indonesian province for the job's location/city. For example, if location is "
-            "'Bandung', province should be 'Jawa Barat'. If location is 'Jakarta Selatan' or 'Jakarta', province should be 'DKI Jakarta'. "
-            "If it cannot be mapped or is remote/work from home/outside Indonesia, set as null.\n"
-            "- \"min_salary\": Extract the minimum monthly salary in Rupiah (IDR) if specified (e.g., if salary is 'Rp 3 - 4.5 Juta', set as 3000000). Otherwise null.\n"
-            "- \"max_salary\": Extract the maximum monthly salary in Rupiah (IDR) if specified (e.g., if salary is 'Rp 3 - 4.5 Juta', set as 4500000; if 's.d. Rp 5.000.000', set as 5000000). Otherwise null.\n\n"
-            
-            f"CRITICAL: Current local time is ({current_now}). "
-            "If text indicates relative times like '2 hours ago', '2 jam yang lalu', '10 mins ago', or 'baru saja', "
-            "deduct it accurately from current local time. Do NOT roll back to yesterday if it does not cross midnight.\n\n"
-            
-            "RULES:\n"
-            "1. No ```json markdown wrappers.\n"
-            "2. Escape inner quotes properly.\n\n"
-            f"Raw Text:\n{raw_text[:2500]}"
-        )
-
-        url, headers, payload = self._prepare_ai_request(system_instruction, prompt)
-
-        try:
-            response = self._post(url, json_data=payload, headers=headers, timeout=20.0)
-            if response.status_code == 200:
-                content = self._parse_ai_response(response.json()).strip()
-                content_str = re.sub(r'```json\s*|\s*```', '', content)
-                
-                first_brace = content_str.find('{')
-                last_brace = content_str.rfind('}')
-                if first_brace != -1 and last_brace != -1:
-                    content_str = content_str[first_brace:last_brace+1]
-                
-                content_str = re.sub(r'\n\s*', ' ', content_str) 
-                return json.loads(content_str)
-            else:
-                return self._mock_fallback(raw_text, f"HTTP {response.status_code}")
-        except Exception as e:
-            return self._mock_fallback(raw_text, str(e))
-
-    def _mock_fallback(self, raw_text: str, reason: str) -> dict:
-        lines = [line.strip() for line in raw_text.split("\n") if line.strip()]
-        title = lines[0] if lines else "Unknown Job Title"
-        if len(title) > 80: title = title[:80] + "..."
-        return {
-            "job_title": f"{title} (AI Raw)",
-            "company_name": "Under Verification",
-            "company_logo": None,
-            "requirements": ["Kendala ekstraksi AI.", f"Alasan: {reason}"],
-            "location": "Indonesia",
-            "posted_at": None,
-            "min_age": None,
-            "max_age": None,
-            "province": None,
-            "min_salary": None,
-            "max_salary": None
-        }
-
-    def push_to_laravel(self, platform_name: str, job_data: dict, source_url: str) -> bool:
-        webhook_url = f"{settings.LARAVEL_API_URL}/webhooks/jobs"
-        headers = {"X-Hermes-Token": settings.HERMES_WEBHOOK_TOKEN, "Content-Type": "application/json"}
-        
-        reqs = job_data.get("requirements", [])
-        if isinstance(reqs, str):
-            reqs = [reqs]
-        elif not isinstance(reqs, list):
-            reqs = []
-            
-        payload = {
-            "platform_name": platform_name,
-            "job_title": job_data.get("job_title") or "Unknown Job",
-            "company_name": job_data.get("company_name"),
-            "company_logo": job_data.get("company_logo"),
-            "requirements": reqs,
-            "source_url": source_url,
-            "location": job_data.get("location") or "Indonesia",
-            "posted_at": job_data.get("posted_at"),
-            "min_age": job_data.get("min_age"),
-            "max_age": job_data.get("max_age"),
-            "province": job_data.get("province"),
-            "min_salary": job_data.get("min_salary"),
-            "max_salary": job_data.get("max_salary")
-        }
-        try:
-            response = self._post(webhook_url, json_data=payload, headers=headers, timeout=25.0)
-            if response.status_code not in [200, 201]:
-                logger.error(f"Laravel webhook failed: {response.status_code} - {response.text}")
-            return response.status_code in [200, 201]
-        except Exception as e:
-            logger.error(f"Error pushing job to Laravel: {str(e)}")
-            return False
-
-    def scrape_platform(self, platform_name: str, max_jobs: int = 5) -> int:
-        config = PLATFORM_CONFIGS.get(platform_name)
-        if not config: return 0
-
-        logger.info(f"=== Starting scrape cycle for platform: {platform_name} ===")
-        
-        # --- STRATEGI SURVEI MULTI-URL TARGET ---
-        search_urls = [config['search_url']]
-        
-        # FIX: Jika Loker.id, lakukan scan filter lokasi aktif di halaman utama secara otomatis
-        if platform_name == 'Loker.id':
-            detected_locations = self.discover_loker_id_locations()
-            if detected_locations:
-                # Ambil sampel 3 kota secara acak agar muatan data bervariasi setiap siklus jalannya skrip
-                sampled_locations = random.sample(detected_locations, min(3, len(detected_locations)))
-                search_urls.extend(sampled_locations)
-                logger.info(f"🎯 Loker.id Target sebaran diperluas ke: {search_urls}")
-
-        raw_job_urls = []
-        
-        # Iterasi seluruh target URL yang terkumpul
-        for target_url in search_urls:
-            logger.info(f"📡 Membaca daftar lowongan dari target URL: {target_url}")
-            html = self.fetch_page_content(target_url, use_browser=config['use_browser'])
-            
-            if html:
-                found_urls = self.extract_job_urls_with_ai(html, platform_name)
-                raw_job_urls.extend(found_urls)
-            
-            time.sleep(random.uniform(2.0, 4.0))
-
-        if not raw_job_urls and platform_name == 'KitaLulus':
-            logger.info("Attempting KitaLulus direct URL fallback to /lowongan...")
-            html = self.fetch_page_content("[https://www.kitalulus.com/lowongan](https://www.kitalulus.com/lowongan)", use_browser=config['use_browser'])
-            if html:
-                raw_job_urls = self.extract_job_urls_with_ai(html, platform_name)
-
-        if not raw_job_urls:
-            logger.warning(f"Main route for {platform_name} returned 0 results. Triggering self-healing...")
-            fallback_html = self.self_healing_google_search(platform_name, config['fallback_query'])
-            if fallback_html:
-                raw_job_urls = self.extract_job_urls_with_ai(fallback_html, f"Google Search for {platform_name}")
-
-        logger.info(f"Total raw URLs discovered by AI/Fallback: {len(raw_job_urls)}")
-        
-        valid_target_urls = []
-        for url in raw_job_urls:
-            if "google.com" in url: 
-                continue
-                
-            norm_url = self._normalize_url(url)
-            
-            if not self._is_valid_job_url(norm_url, platform_name):
-                logger.warning(f"⏭️ [Skip URL] URL bukan halaman detail lowongan valid: {norm_url}")
-                continue
-            
-            if norm_url in self.visited_urls:
-                logger.info(f"⏭️ [Skip Awal] URL sudah pernah di-scrape sebelumnya: {norm_url}")
-                continue
-                
-            if norm_url not in valid_target_urls:
-                valid_target_urls.append(norm_url)
-                
-            if len(valid_target_urls) >= max_jobs:
-                break
-
-        logger.info(f"Total fresh & unique URLs ready to process: {len(valid_target_urls)}")
-        successful_pushes = 0
-
-        for index, norm_url in enumerate(valid_target_urls):
-            logger.info(f"Processing job [{index+1}/{len(valid_target_urls)}]: {norm_url}")
-
-            detail_html = self.fetch_page_content(norm_url, use_browser=config['use_browser'])
-            if not detail_html: 
-                continue
-
-            soup = BeautifulSoup(detail_html, 'html.parser')
-            
-            # FIX: Amankan tag <form> khusus Loker.id agar deskripsi utamanya tidak ikut lenyap
-            ignored_tags = ["script", "style", "nav", "header", "footer", "aside", "iframe"]
-            if "loker.id" not in platform_name.lower():
-                ignored_tags.append("form")
-                
-            for element in soup(ignored_tags):
-                element.decompose()
-            
-            plain_text = soup.get_text(separator="\n")
-            cleaned_text = "\n".join([line.strip() for line in plain_text.split("\n") if line.strip()])
-            
-            job_details = self.extract_job_details_with_ai(cleaned_text)
-            
-            job_title = job_details.get("job_title")
-            invalid_titles = {
-                "unknown job", "unknown", "unknown job title", "job title", "null", 
-                "job fair", "sign in", "login", "register", "cookie consent", "cookie",
-                "kementerian ketenagakerjaan ri", "kemnaker", "jobstreet", "linkedin", "indeed",
-                "hubungi kami", "contact us", "about us", "tentang kami", "privacy policy"
-            }
-            if not job_title or job_title.strip().lower() in invalid_titles:
-                logger.warning(f"⚠️ [Skip Detail] Judul lowongan tidak valid ('{job_title}') untuk URL: {norm_url}")
-                continue
-                
-            pushed = self.push_to_laravel(platform_name, job_details, norm_url)
-            if pushed: 
-                successful_pushes += 1
-                self._mark_url_processed(norm_url)
-                
-            time.sleep(random.uniform(2.0, 4.5))
-
-        return successful_pushes
+        system_instruction =
