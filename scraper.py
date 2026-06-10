@@ -294,6 +294,7 @@ class HermesScraper:
 
         logger.info(f"Found {len(links)} cleaned links on {platform_name}. Querying AI filtering...")
         
+        # --- BLOK YANG MENYEBABKAN ERROR (SUDAH DIBERSIHKAN) ---
         system_instruction = "You are a JSON parser. Output a clean JSON array of strings containing valid job post URLs."
         prompt = (
             f"Filter the list from {platform_name} and return ONLY direct job detail page URLs.\n"
@@ -340,52 +341,6 @@ class HermesScraper:
             except Exception as e:
                 logger.error(f"AI Link extraction failed: {str(e)}")
                 time.sleep(1.5)
-
-        # EMERGENCY FALLBACK REGEX
-        logger.warning(f"AI Engine completely unavailable. Activating Regex Emergency Backup...")
-        if 'linkedin' in platform_name.lower():
-            platform_key = 'LinkedIn'
-        elif 'jobstreet' in platform_name.lower():
-            platform_key = 'JobStreet'
-        elif 'indeed' in platform_name.lower():
-            platform_key = 'Indeed'
-        elif 'kitalulus' in platform_name.lower():
-            platform_key = 'KitaLulus'
-        elif 'loker' in platform_name.lower():
-            platform_key = 'Loker.id'
-        elif 'karirhub' in platform_name.lower() or 'kemnaker' in platform_name.lower():
-            platform_key = 'Karirhub Kemnaker'
-        else:
-            platform_key = 'LinkedIn'
-            
-        fallback_regex = regex_fallbacks.get(platform_key)
-        
-        if fallback_regex:
-            matched_urls = []
-            for url_str in raw_urls_for_regex:
-                if "google.com/url" in url_str or "/url?" in url_str:
-                    match_clean = re.search(r'url=(https?://[^&]+)', url_str)
-                    if match_clean:
-                        url_str = urllib.parse.unquote(match_clean.group(1))
-
-                if re.search(fallback_regex, url_str):
-                    if url_str.startswith('/'):
-                        if 'jobstreet' in platform_key.lower():
-                            url_str = "https://id.jobstreet.com" + url_str
-                        elif 'indeed' in platform_key.lower():
-                            url_str = "https://id.indeed.com" + url_str
-                        elif 'kitalulus' in platform_key.lower():
-                            url_str = "https://www.kitalulus.com" + url_str
-                        elif 'linkedin' in platform_key.lower():
-                            url_str = "https://www.linkedin.com" + url_str
-                        elif 'karirhub' in platform_key.lower():
-                            url_str = "https://karirhub.kemnaker.go.id" + url_str
-                        elif 'loker' in platform_key.lower():
-                            url_str = "https://www.loker.id" + url_str
-                    matched_urls.append(url_str)
-            return list(set(matched_urls))
-            
-        return []
 
     def self_healing_google_search(self, platform_name: str, query: str) -> str:
         encoded_query = urllib.parse.quote(query)
