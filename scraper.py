@@ -452,37 +452,106 @@ class HermesScraper:
         }
 
     def push_to_laravel(self, platform_name: str, job_data: dict, source_url: str) -> bool:
-        webhook_url = f"{settings.LARAVEL_API_URL}/webhooks/jobs"
-        headers = {"X-Hermes-Token": settings.HERMES_WEBHOOK_TOKEN, "Content-Type": "application/json"}
-        
-        reqs = job_data.get("requirements", [])
-        if isinstance(reqs, str):
-            reqs = [reqs]
-        elif not isinstance(reqs, list):
-            reqs = []
-            
-        payload = {
-            "platform_name": platform_name,
-            "job_title": job_data.get("job_title") or "Unknown Job",
-            "company_name": job_data.get("company_name"),
-            "company_logo": job_data.get("company_logo"),
-            "requirements": reqs,
-            "source_url": source_url,
-            "location": job_data.get("location") or "Indonesia",
-            "posted_at": job_data.get("posted_at"),
-            "min_age": job_data.get("min_age"),
-            "max_age": job_data.get("max_age"),
-            "province": job_data.get("province"),
-            "min_salary": job_data.get("min_salary"),
-            "max_salary": job_data.get("max_salary")
-        }
+        # Note: Function name kept for compatibility, but now pushes directly to DB
         try:
-            response = self._post(webhook_url, json_data=payload, headers=headers, timeout=25.0)
-            if response.status_code not in [200, 201]:
-                logger.error(f"Laravel webhook failed: {response.status_code} - {response.text}")
-            return response.status_code in [200, 201]
+            import psycopg2
+            import json
+            from datetime import datetime
+            
+            # Connect to DB
+            conn = psycopg2.connect(
+                dbname="jobline",
+                user="postgres",
+                password="P@ssw0rd",
+                host="127.0.0.1",
+                port="5432"
+            )
+            cursor = conn.cursor()
+            
+            # Pengecekan apakah URL loker sudah ada di DB
+            cursor.execute("SELECT id FROM job_listings WHERE source_url = %s", (source_url,))
+            if cursor.fetchone():
+                import logging
+                logger = logging.getLogger("hermes.scraper")
+                logger.info(f"⏭️ [Skip] Job with URL {source_url} already exists in DB.")
+                cursor.close()
+                conn.close()
+                return True # Treat as success so we don't retry unnecessarily
+                
+            # Dapatkan platform_id
+            cursor.execute("SELECT id FROM platforms WHERE name ILIKE %s", (platform_name,))
+            platform_row = cursor.fetchone()
+            if not platform_row:
+                import logging
+                logger = logging.getLogger("hermes.scraper")
+                logger.warning(f"Platform {platform_name} not found in DB. Defaulting to id 1.")
+                platform_id = 1
+            else:
+                platform_id = platform_row[0]
+                
+            reqs = job_data.get("requirements", [])
+            if isinstance(reqs, str):
+                reqs = [reqs]
+            elif not isinstance(reqs, list):
+                reqs = []
+                
+            now = datetime.now()
+            
+            insert_query = """
+                INSERT INTO job_listings (
+                    platform_id, job_title, company_name, company_logo, 
+                    requirements, source_url, location, posted_at, 
+                    min_age, max_age, province, min_salary, max_salary,
+                    created_at, updated_at
+                ) VALUES (
+                    %s, %s, %s, %s, 
+                    %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
+                    %s, %s
+                )
+            """
+            
+            # Extract values, converting posted_at string to datetime if needed
+            posted_at = job_data.get("posted_at")
+            if posted_at:
+                try:
+                    posted_at = datetime.strptime(posted_at, "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    try:
+                        posted_at = datetime.strptime(posted_at, "%Y-%m-%d")
+                    except ValueError:
+                        posted_at = None
+            
+            cursor.execute(insert_query, (
+                platform_id,
+                job_data.get("job_title") or "Unknown Job",
+                job_data.get("company_name"),
+                job_data.get("company_logo"),
+                json.dumps(reqs),
+                source_url,
+                job_data.get("location") or "Indonesia",
+                posted_at,
+                job_data.get("min_age"),
+                job_data.get("max_age"),
+                job_data.get("province"),
+                job_data.get("min_salary"),
+                job_data.get("max_salary"),
+                now,
+                now
+            ))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            import logging
+            logger = logging.getLogger("hermes.scraper")
+            logger.info(f"Successfully inserted job directly into DB: {job_data.get('job_title')}")
+            return True
         except Exception as e:
-            logger.error(f"Error pushing job to Laravel: {str(e)}")
+            import logging
+            logger = logging.getLogger("hermes.scraper")
+            logger.error(f"Error pushing job directly to DB: {str(e)}")
             return False
 
     def scrape_platform(self, platform_name: str, max_jobs: int = 5) -> int:
