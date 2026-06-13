@@ -460,13 +460,22 @@ class HermesScraper:
             
             # Connect to DB
             conn = psycopg2.connect(
-                dbname="jobline",
+                dbname="loker",
                 user="postgres",
-                password="P@ssw0rd",
-                host="127.0.0.1",
+                password="bismillah",
+                host="product_database",
                 port="5432"
             )
             cursor = conn.cursor()
+
+            # conn = psycopg2.connect(
+            #     dbname="jobline",
+            #     user="postgres",
+            #     password="P@ssw0rd",
+            #     host="127.0.0.1",
+            #     port="5432"
+            # )
+            # cursor = conn.cursor()
             
             # Pengecekan apakah URL loker sudah ada di DB
             cursor.execute("SELECT id FROM job_listings WHERE source_url = %s", (source_url,))
