@@ -265,6 +265,56 @@ class HermesScraper:
             logger.error(f"Failed parsing response structure: {str(e)}")
             return ""
 
+    def extract_pagination_urls_with_ai(self, html_content: str, platform_name: str, base_url: str) -> list:
+        soup = BeautifulSoup(html_content, 'html.parser')
+        links = []
+        for a in soup.find_all('a', href=True):
+            href = a['href']
+            text = a.get_text(strip=True)[:20]
+            if len(href) > 2 and not href.startswith('#') and not href.startswith('javascript:'):
+                links.append({"text": text, "url": href})
+                
+        if not links or not settings.GEMINI_API_KEY:
+            return []
+            
+        logger.info(f"🕸️ [Crawling Skill] Menganalisis {len(links)} link untuk mencari paginasi (Next Page) pada {platform_name}...")
+        
+        system_instruction = "You are a web crawler JSON parser. Output a clean JSON array of strings containing valid pagination URLs (like Next Page, Page 2, offset=10, etc)."
+        import json, urllib.parse
+        prompt = (
+            f"Find pagination URLs (like 'Next', 'Load More', or page numbers > 1) from the data.\n"
+            f"Base URL: {base_url}\n"
+            f"Data:\n{json.dumps(links[:150])}\n\n"
+            f"Return clean JSON array of strings only. Max 3 URLs. If none found, return []."
+        )
+        
+        url, headers, payload = self._prepare_ai_request(system_instruction, prompt)
+        try:
+            response = self._post(url, json_data=payload, headers=headers, timeout=20.0)
+            if response.status_code == 200:
+                res_text = self._parse_ai_response(response.json()).strip()
+                import re
+                res_text = re.sub(r'```json\s*|\s*```', '', res_text)
+                first_bracket = res_text.find('[')
+                last_bracket = res_text.rfind(']')
+                if first_bracket != -1 and last_bracket != -1:
+                    res_text = res_text[first_bracket:last_bracket+1]
+                
+                ai_urls = json.loads(res_text)
+                cleaned_urls = []
+                for u in ai_urls:
+                    if u.startswith('/'):
+                        parsed_base = urllib.parse.urlparse(base_url)
+                        u = f"{parsed_base.scheme}://{parsed_base.netloc}{u}"
+                    elif not u.startswith('http'):
+                        u = urllib.parse.urljoin(base_url, u)
+                    cleaned_urls.append(u)
+                return cleaned_urls[:3] # Batasi maksimal 3 link baru
+        except Exception as e:
+            logger.error(f"🕸️ [Crawling Skill] Gagal mengekstrak paginasi: {str(e)}")
+            
+        return []
+
     def extract_job_urls_with_ai(self, html_content: str, platform_name: str) -> list:
         regex_fallbacks = {
             'LinkedIn': r'linkedin\.com/jobs/view/[0-9]+',
@@ -584,30 +634,48 @@ class HermesScraper:
         if not config: return 0
 
         logger.info(f"=== Starting scrape cycle for platform: {platform_name} ===")
-        search_urls = [config['search_url']]
+        from collections import deque
+        search_queue = deque([config['search_url']])
+        visited_search_urls = set()
         
         if platform_name == 'Loker.id':
             detected_locations = self.discover_loker_id_locations()
             if detected_locations:
                 sampled_locations = random.sample(detected_locations, min(3, len(detected_locations)))
-                search_urls.extend(sampled_locations)
-                logger.info(f"🎯 Loker.id Target sebaran diperluas ke: {search_urls}")
+                for loc in sampled_locations:
+                    search_queue.append(loc)
+                logger.info(f"🎯 Loker.id Target sebaran diperluas ke: {sampled_locations}")
 
         raw_job_urls = []
+        crawled_pages_count = 0
+        MAX_PAGES_TO_CRAWL = 3 # Kedalaman crawling maksimum
         
-        for target_url in search_urls:
+        while search_queue and crawled_pages_count < MAX_PAGES_TO_CRAWL:
+            target_url = search_queue.popleft()
+            if target_url in visited_search_urls:
+                continue
+            visited_search_urls.add(target_url)
+            
             logger.info(f"📡 Membaca daftar lowongan dari target URL: {target_url}")
             html = self.fetch_page_content(target_url, use_browser=config['use_browser'])
             
             if html:
                 found_urls = self.extract_job_urls_with_ai(html, platform_name)
                 raw_job_urls.extend(found_urls)
+                
+                # CRAWLING SKILL: Discover pagination
+                pagination_urls = self.extract_pagination_urls_with_ai(html, platform_name, target_url)
+                for p_url in pagination_urls:
+                    if p_url not in visited_search_urls and p_url not in search_queue:
+                        search_queue.append(p_url)
+                        logger.info(f"🕸️ [Crawling Skill] Menemukan halaman paginasi baru: {p_url}")
             
+            crawled_pages_count += 1
             time.sleep(random.uniform(2.0, 4.0))
 
         if not raw_job_urls and platform_name == 'KitaLulus':
             logger.info("Attempting KitaLulus direct URL fallback to /lowongan...")
-            html = self.fetch_page_content("[https://www.kitalulus.com/lowongan](https://www.kitalulus.com/lowongan)", use_browser=config['use_browser'])
+            html = self.fetch_page_content("https://www.kitalulus.com/lowongan", use_browser=config['use_browser'])
             if html:
                 raw_job_urls = self.extract_job_urls_with_ai(html, platform_name)
 
