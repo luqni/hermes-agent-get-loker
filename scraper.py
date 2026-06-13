@@ -42,7 +42,7 @@ PLATFORM_CONFIGS = {
         'use_browser': True
     },
     'Loker.id': {
-        'search_url': "https://www.loker.id/cari-lowongan-kerja",
+        'search_url': "https://www.loker.id/",
         'fallback_query': "site:loker.id/ \"lowongan kerja terbaru\"",
         'use_browser': True
     }
@@ -132,14 +132,11 @@ class HermesScraper:
 
     def _is_valid_job_url(self, url: str, platform_name: str) -> bool:
         url_lower = url.lower()
-        
-        # General filter for homepages/landing pages (no trailing paths or only very short ones)
         parsed = urllib.parse.urlparse(url)
         path = parsed.path.strip("/")
         if not path or len(path) < 4:
             return False
             
-        # Specific patterns per platform
         if "linkedin" in platform_name.lower():
             return "/jobs/view/" in url_lower
         elif "jobstreet" in platform_name.lower():
@@ -149,7 +146,7 @@ class HermesScraper:
         elif "kitalulus" in platform_name.lower():
             return "/lowongan-kerja/" in url_lower or "/lowongan/detail/" in url_lower
         elif "loker.id" in platform_name.lower():
-            return ".html" in url_lower or "jobid=" in url_lower
+            return "cari-lowongan-kerja" not in url_lower and "lokasi-pekerjaan" not in url_lower and len(path) > 10
         elif "karirhub" in platform_name.lower() or "kemnaker" in platform_name.lower():
             return "/lowongan/" in url_lower
             
@@ -179,7 +176,6 @@ class HermesScraper:
                 logger.error(f"Error in standard fetch for {url}: {str(e)}")
 
         logger.info(f"Using advanced browser automation to load: {url}")
-        # --- MEMORY EFFICIENCY: Pembersihan instance Chromium secara paksa ---
         try:
             with sync_playwright() as p:
                 with p.chromium.launch(headless=True) as browser:
@@ -193,7 +189,6 @@ class HermesScraper:
                             stealth_sync(page)
                             
                         page.goto(url, wait_until="domcontentloaded", timeout=40000)
-                        
                         page.wait_for_timeout(random.randint(2500, 5000))
                         page.evaluate(f"window.scrollBy(0, {random.randint(350, 450)})")
                         page.wait_for_timeout(random.randint(1500, 3000))
@@ -205,6 +200,30 @@ class HermesScraper:
             logger.error(f"Playwright automation failed for {url}: {str(e)}")
             return ""
 
+    def discover_loker_id_locations(self) -> list:
+        homepage_url = "https://www.loker.id"
+        logger.info(f"🔍 [Discover] Membaca filter lokasi langsung dari {homepage_url}...")
+        
+        html = self.fetch_page_content(homepage_url, use_browser=True)
+        if not html:
+            logger.warning("⚠️ [Discover] Gagal memuat homepage Loker.id untuk scanning lokasi.")
+            return []
+            
+        soup = BeautifulSoup(html, 'html.parser')
+        discovered_urls = []
+        
+        for a in soup.find_all('a', href=True):
+            href = a['href']
+            if '/lokasi-pekerjaan/' in href:
+                if href.startswith('/'):
+                    href = "https://www.loker.id" + href
+                
+                if href not in discovered_urls:
+                    discovered_urls.append(href)
+                    
+        logger.info(f"✨ [Discover] Berhasil menemukan {len(discovered_urls)} lokasi aktif di Loker.id!")
+        return discovered_urls
+
     def _prepare_ai_request(self, system_instruction: str, prompt_text: str) -> tuple:
         provider = settings.AI_PROVIDER.lower()
         model = settings.GEMINI_MODEL
@@ -215,7 +234,7 @@ class HermesScraper:
             headers = {
                 "Authorization": f"Bearer {key}",
                 "Content-Type": "application/json",
-                "HTTP-Referer": "https://hermes-agent.internal", 
+                "HTTP-Referer": "https://hermes-agent.internal",
                 "X-Title": "Hermes Autonomous Job Scraper Bot"
             }
             payload = {
@@ -252,7 +271,7 @@ class HermesScraper:
             'JobStreet': r'(?:jobstreet\.(?:com|co\.id))?/[^"\'\s<>]+?/job/[0-9]+',
             'Indeed': r'(?:indeed\.com)?/(?:rc/clk|viewjob)\?[^"\'\s<>]+',
             'KitaLulus': r'kitalulus\.com/lowongan-kerja/[^"\'\s<>]+|kitalulus\.com/lowongan/detail/[^"\'\s<>]+',
-            'Loker.id': r'loker\.id/[^"\'\s<>]+?\.html|loker\.id/cari-lowongan-kerja\?jobid=[0-9]+',
+            'Loker.id': r'loker\.id/[^"\'\s<>]+',
             'Karirhub Kemnaker': r'(?:karirhub\.kemnaker\.go\.id)?/lowongan/[^"\'\s<>]+'
         }
 
@@ -260,7 +279,6 @@ class HermesScraper:
         links = []
         raw_urls_for_regex = []
 
-        # --- TOKEN EFFICIENCY: Saring link sampah sebelum lempar ke AI ---
         for a in soup.find_all('a', href=True):
             href = a['href']
             text = a.get_text(strip=True)[:30]
@@ -312,12 +330,12 @@ class HermesScraper:
                                 u = "https://www.linkedin.com" + u
                             elif 'indeed' in platform_key:
                                 u = "https://id.indeed.com" + u
-                            elif 'loker.id' in platform_key:
+                            elif 'loker.id' in platform_key or 'loker' in platform_key:
                                 u = "https://www.loker.id" + u
                         cleaned_urls.append(u)
                     return cleaned_urls
                 elif response.status_code in [429, 503]:
-                    sleep_time = 5 * (2 ** attempt) 
+                    sleep_time = 5 * (2 ** attempt)
                     time.sleep(sleep_time)
             except Exception as e:
                 logger.error(f"AI Link extraction failed: {str(e)}")
@@ -333,7 +351,7 @@ class HermesScraper:
             platform_key = 'Indeed'
         elif 'kitalulus' in platform_name.lower():
             platform_key = 'KitaLulus'
-        elif 'loker.id' in platform_name.lower():
+        elif 'loker' in platform_name.lower():
             platform_key = 'Loker.id'
         elif 'karirhub' in platform_name.lower() or 'kemnaker' in platform_name.lower():
             platform_key = 'Karirhub Kemnaker'
@@ -362,7 +380,7 @@ class HermesScraper:
                             url_str = "https://www.linkedin.com" + url_str
                         elif 'karirhub' in platform_key.lower():
                             url_str = "https://karirhub.kemnaker.go.id" + url_str
-                        elif 'loker.id' in platform_key.lower():
+                        elif 'loker' in platform_key.lower():
                             url_str = "https://www.loker.id" + url_str
                     matched_urls.append(url_str)
             return list(set(matched_urls))
@@ -379,14 +397,12 @@ class HermesScraper:
         if not settings.GEMINI_API_KEY:
             return self._mock_fallback(raw_text, "API Key Missing")
 
-        # --- FIX KETERANGAN WAKTU: Waktu Lokal Akurat ---
         current_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         system_instruction = (
             "You are a strict data extraction AI. Convert webpage text into a minified JSON object without markdown formatting."
         )
 
-        # --- TOKEN EFFICIENCY: Batasi teks deskripsi lowongan maksimal 2500 karakter saja ---
         prompt = (
             "Extract job data into a valid JSON object with EXACTLY these keys:\n"
             "\"job_title\" (string), \"company_name\" (string/null), \"company_logo\" (string URL/null), \"location\" (string), "
@@ -426,7 +442,7 @@ class HermesScraper:
                 if first_brace != -1 and last_brace != -1:
                     content_str = content_str[first_brace:last_brace+1]
                 
-                content_str = re.sub(r'\n\s*', ' ', content_str) 
+                content_str = re.sub(r'\n\s*', ' ', content_str)
                 return json.loads(content_str)
             else:
                 return self._mock_fallback(raw_text, f"HTTP {response.status_code}")
@@ -568,15 +584,30 @@ class HermesScraper:
         if not config: return 0
 
         logger.info(f"=== Starting scrape cycle for platform: {platform_name} ===")
-        html = self.fetch_page_content(config['search_url'], use_browser=config['use_browser'])
+        search_urls = [config['search_url']]
         
+        if platform_name == 'Loker.id':
+            detected_locations = self.discover_loker_id_locations()
+            if detected_locations:
+                sampled_locations = random.sample(detected_locations, min(3, len(detected_locations)))
+                search_urls.extend(sampled_locations)
+                logger.info(f"🎯 Loker.id Target sebaran diperluas ke: {search_urls}")
+
         raw_job_urls = []
-        if html:
-            raw_job_urls = self.extract_job_urls_with_ai(html, platform_name)
+        
+        for target_url in search_urls:
+            logger.info(f"📡 Membaca daftar lowongan dari target URL: {target_url}")
+            html = self.fetch_page_content(target_url, use_browser=config['use_browser'])
+            
+            if html:
+                found_urls = self.extract_job_urls_with_ai(html, platform_name)
+                raw_job_urls.extend(found_urls)
+            
+            time.sleep(random.uniform(2.0, 4.0))
 
         if not raw_job_urls and platform_name == 'KitaLulus':
             logger.info("Attempting KitaLulus direct URL fallback to /lowongan...")
-            html = self.fetch_page_content("https://www.kitalulus.com/lowongan", use_browser=config['use_browser'])
+            html = self.fetch_page_content("[https://www.kitalulus.com/lowongan](https://www.kitalulus.com/lowongan)", use_browser=config['use_browser'])
             if html:
                 raw_job_urls = self.extract_job_urls_with_ai(html, platform_name)
 
@@ -588,15 +619,13 @@ class HermesScraper:
 
         logger.info(f"Total raw URLs discovered by AI/Fallback: {len(raw_job_urls)}")
         
-        # --- FIX KEBOCORAN DUPLIKAT: Saring total sebelum memotong kuota max_jobs ---
         valid_target_urls = []
         for url in raw_job_urls:
-            if "google.com" in url: 
+            if "google.com" in url:
                 continue
                 
             norm_url = self._normalize_url(url)
             
-            # --- VALIDASI URL DETAIL LOWONGAN ---
             if not self._is_valid_job_url(norm_url, platform_name):
                 logger.warning(f"⏭️ [Skip URL] URL bukan halaman detail lowongan valid: {norm_url}")
                 continue
@@ -618,12 +647,16 @@ class HermesScraper:
             logger.info(f"Processing job [{index+1}/{len(valid_target_urls)}]: {norm_url}")
 
             detail_html = self.fetch_page_content(norm_url, use_browser=config['use_browser'])
-            if not detail_html: 
+            if not detail_html:
                 continue
 
             soup = BeautifulSoup(detail_html, 'html.parser')
-            # --- MEMORY & TOKEN EFFICIENCY: Decompose kontainer sampah ekstrim ---
-            for element in soup(["script", "style", "nav", "header", "footer", "form", "aside", "iframe"]):
+            
+            ignored_tags = ["script", "style", "nav", "header", "footer", "aside", "iframe"]
+            if "loker.id" not in platform_name.lower():
+                ignored_tags.append("form")
+                
+            for element in soup(ignored_tags):
                 element.decompose()
             
             plain_text = soup.get_text(separator="\n")
@@ -631,10 +664,9 @@ class HermesScraper:
             
             job_details = self.extract_job_details_with_ai(cleaned_text)
             
-            # --- VALIDASI HASIL EKSTRAKSI JUDUL LOWONGAN ---
             job_title = job_details.get("job_title")
             invalid_titles = {
-                "unknown job", "unknown", "unknown job title", "job title", "null", 
+                "unknown job", "unknown", "unknown job title", "job title", "null",
                 "job fair", "sign in", "login", "register", "cookie consent", "cookie",
                 "kementerian ketenagakerjaan ri", "kemnaker", "jobstreet", "linkedin", "indeed",
                 "hubungi kami", "contact us", "about us", "tentang kami", "privacy policy"
@@ -644,7 +676,7 @@ class HermesScraper:
                 continue
                 
             pushed = self.push_to_laravel(platform_name, job_details, norm_url)
-            if pushed: 
+            if pushed:
                 successful_pushes += 1
                 self._mark_url_processed(norm_url)
                 
