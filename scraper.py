@@ -245,7 +245,12 @@ class HermesScraper:
                 ],
             }
         else:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+            if settings.GEMINI_API_BASE:
+                base_url = settings.GEMINI_API_BASE.rstrip('/')
+                url = f"{base_url}/models/{model}:generateContent?key={key}"
+            else:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+                
             headers = {"Content-Type": "application/json"}
             payload = {
                 "contents": [{"parts": [{"text": f"{system_instruction}\n\n{prompt_text}"}]}]

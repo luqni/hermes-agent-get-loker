@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     SCRAPE_INTERVAL_MINUTES: int = int(os.getenv("SCRAPE_INTERVAL_MINUTES", "30"))
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    GEMINI_API_BASE: str = os.getenv("GEMINI_API_BASE", "")
     # --- TAMBAHKAN BARIS INI ---
     AI_PROVIDER: str = os.getenv("AI_PROVIDER", "gemini") 
     DATA_DIR: str = os.getenv("DATA_DIR", ".")
