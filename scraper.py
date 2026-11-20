@@ -163,7 +163,7 @@ class HermesScraper:
                 "Authorization": f"Bearer {key}",
                 "Content-Type": "application/json",
                 # FIX HEADERS: Gunakan domain publik standar agar OpenRouter tidak memblokir localhost
-                "HTTP-Referer": "https://hermes-agent.internal", 
+                "HTTP-Referer": "https://hermes-agent.internal",
                 "X-Title": "Hermes Autonomous Job Scraper Bot"
             }
             payload = {
@@ -172,8 +172,21 @@ class HermesScraper:
                     {"role": "system", "content": system_instruction},
                     {"role": "user", "content": prompt_text}
                 ],
-                # Beberapa model free-tier sensitif terhadap response_format, 
+                # Beberapa model free-tier sensitif terhadap response_format,
                 # kita biarkan prompt natural yang memaksa bentuk JSON agar lebih aman
+            }
+        elif provider == "akal":
+            url = settings.AKAL_API_URL
+            headers = {
+                "Authorization": f"Bearer {settings.AKAL_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_instruction},
+                    {"role": "user", "content": prompt_text}
+                ]
             }
         else: # Default: gemini native
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"

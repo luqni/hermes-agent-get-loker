@@ -8,7 +8,9 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     # --- TAMBAHKAN BARIS INI ---
-    AI_PROVIDER: str = os.getenv("AI_PROVIDER", "gemini") 
+    AI_PROVIDER: str = os.getenv("AI_PROVIDER", "gemini")
+    AKAL_API_URL: str = os.getenv("AKAL_API_URL", "https://api.akal.ai/v1/chat/completions")
+    AKAL_API_KEY: str = os.getenv("AKAL_API_KEY", "")
     DATA_DIR: str = os.getenv("DATA_DIR", ".")
 
     class Config:
